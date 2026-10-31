@@ -1,9 +1,12 @@
 package com.shiftcalendar
 
+import android.Manifest
+import android.os.Build
 import android.os.Bundle
 import androidx.activity.ComponentActivity
 import androidx.activity.compose.setContent
 import androidx.activity.enableEdgeToEdge
+import androidx.activity.result.contract.ActivityResultContracts
 import androidx.compose.foundation.background
 import androidx.compose.foundation.layout.*
 import androidx.compose.foundation.rememberScrollState
@@ -28,9 +31,17 @@ import java.time.LocalDateTime
 import java.time.YearMonth
 
 class MainActivity : ComponentActivity() {
+
+    /** Разрешение на уведомления нужно, чтобы напоминание «за час до смены» дошло. */
+    private val requestNotifications =
+        registerForActivityResult(ActivityResultContracts.RequestPermission()) { }
+
     override fun onCreate(savedInstanceState: Bundle?) {
         super.onCreate(savedInstanceState)
         enableEdgeToEdge()
+        if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.TIRAMISU) {
+            requestNotifications.launch(Manifest.permission.POST_NOTIFICATIONS)
+        }
         setContent {
             MaterialTheme(
                 colorScheme = lightColorScheme(

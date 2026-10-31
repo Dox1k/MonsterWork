@@ -1,0 +1,68 @@
+name: Build APK
+
+on:
+  push:
+    branches: [ main, master ]
+  workflow_dispatch:
+
+permissions:
+  contents: write
+
+jobs:
+  build:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Set up JDK 17
+        uses: actions/setup-java@v4
+        with:
+          distribution: temurin
+          java-version: '17'
+
+      - name: Set up Gradle
+        uses: gradle/actions/setup-gradle@v4
+        with:
+          gradle-version: '8.9'
+
+      - name: Generate keystore
+        run: |
+          keytool -genkeypair -v \
+            -keystore ci-keystore.jks \
+            -alias shift \
+            -keyalg RSA -keysize 2048 -validity 10000 \
+            -storepass shiftcalendar -keypass shiftcalendar \
+            -dname "CN=ShiftCalendar, OU=App, O=ShiftCalendar, L=City, S=State, C=RU"
+
+      - name: Build release APK
+        env:
+          SHIFT_KS_PATH: ${{ github.workspace }}/ci-keystore.jks
+          SHIFT_KS_PASSWORD: shiftcalendar
+          SHIFT_KS_ALIAS: shift
+          SHIFT_KS_KEY_PASSWORD: shiftcalendar
+        run: gradle --no-daemon assembleRelease
+
+      - name: Rename APK
+        run: |
+          mkdir -p out
+          cp app/build/outputs/apk/release/app-release.apk out/MonsterWork.apk
+          ls -lh out/
+
+      - name: Upload APK artifact
+        uses: actions/upload-artifact@v4
+        with:
+          name: MonsterWork-apk
+          path: out/MonsterWork.apk
+          retention-days: 90
+
+      - name: Publish release
+        if: github.ref == 'refs/heads/main' || github.ref == 'refs/heads/master'
+        uses: softprops/action-gh-release@v2
+        with:
+          tag_name: v1.${{ github.run_number }}
+          name: Календарь смен v1.${{ github.run_number }}
+          body: |
+            Сборка APK из коммита ${{ github.sha }}.
+
+            Установка: скачать MonsterWork.apk на телефон, открыть, разрешить установку из этого источника.
+          files: out/MonsterWork.apk

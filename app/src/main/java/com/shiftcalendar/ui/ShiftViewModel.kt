@@ -7,6 +7,7 @@ import com.shiftcalendar.ShiftApp
 import com.shiftcalendar.data.Shift
 import com.shiftcalendar.data.ShiftKind
 import com.shiftcalendar.model.*
+import com.shiftcalendar.notify.ShiftAlarmScheduler
 import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.StateFlow
 import kotlinx.coroutines.flow.asStateFlow
@@ -50,7 +51,11 @@ class ShiftViewModel(app: Application) : AndroidViewModel(app) {
     private val _state = MutableStateFlow(UiState())
     val state: StateFlow<UiState> = _state.asStateFlow()
 
+    /** Напоминание ставится системно, поэтому переживает закрытие приложения. */
+    private val appContext = app.applicationContext
+
     init {
+        ShiftAlarmScheduler.ensureChannel(appContext)
         refresh()
     }
 
@@ -153,11 +158,17 @@ class ShiftViewModel(app: Application) : AndroidViewModel(app) {
                 isDayOff = s.editingDayOff,
                 note = s.editingNote.trim()
             )
-            if (entity.id == 0L) dao.insert(entity) else dao.update(entity)
+            val shiftId = if (entity.id == 0L) dao.insert(entity) else { dao.update(entity); entity.id }
+            // Напоминание за час до смены: снимаем старое, ставим новое.
+            ShiftAlarmScheduler.cancel(appContext, s.editingShift ?: entity.copy(id = shiftId))
+            val withId = entity.copy(id = shiftId)
+            if (!withId.isDayOff) ShiftAlarmScheduler.schedule(appContext, withId)
             _state.value = _state.value.copy(
                 editingDate = null,
                 editingShift = null,
-                savedFlash = "Сохранено"
+                savedFlash = if (withId.isDayOff) "Выходной отмечен"
+                else if (withId.startTime != null) "Сохранено · напомню за час до смены"
+                else "Сохранено"
             )
             refresh()
         }
@@ -165,8 +176,10 @@ class ShiftViewModel(app: Application) : AndroidViewModel(app) {
 
     fun deleteCurrent() {
         val date = _state.value.editingDate ?: return
+        val existing = _state.value.editingShift
         viewModelScope.launch {
             dao.deleteByDate(date.iso())
+            existing?.let { ShiftAlarmScheduler.cancel(appContext, it) }
             _state.value = _state.value.copy(
                 editingDate = null,
                 editingShift = null,
