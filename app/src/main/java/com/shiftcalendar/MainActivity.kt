@@ -8,8 +8,10 @@ import androidx.activity.compose.setContent
 import androidx.activity.enableEdgeToEdge
 import androidx.activity.result.contract.ActivityResultContracts
 import androidx.compose.foundation.background
+import androidx.compose.foundation.clickable
 import androidx.compose.foundation.layout.*
 import androidx.compose.foundation.rememberScrollState
+import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.foundation.verticalScroll
 import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.Scaffold
@@ -20,6 +22,8 @@ import androidx.compose.material3.lightColorScheme
 import androidx.compose.runtime.*
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
+import androidx.compose.ui.draw.clip
+import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
@@ -80,7 +84,7 @@ fun AppRoot(vm: ShiftViewModel = viewModel()) {
                 .verticalScroll(rememberScrollState())
         ) {
             Spacer(Modifier.height(12.dp))
-            Header(state)
+            Header(onOpenPattern = vm::openPattern)
             Spacer(Modifier.height(4.dp))
             MonthStrip(
                 months = state.months,
@@ -121,6 +125,24 @@ fun AppRoot(vm: ShiftViewModel = viewModel()) {
         }
     }
 
+    if (state.patternOpen) {
+        PatternScreen(
+            state = state,
+            onClose = vm::closePattern,
+            onPreset = vm::loadPreset,
+            onAdd = vm::addStep,
+            onRemove = vm::removeStep,
+            onUpdate = vm::updateStep,
+            onAllRates = vm::setAllRates,
+            onStart = vm::setPatternStart,
+            onUntil = vm::setPatternUntil,
+            onAlign = vm::setAlignToMonth,
+            onKeep = vm::setKeepExisting,
+            onPreview = vm::previewPattern,
+            onApply = vm::applyPattern
+        )
+    }
+
     if (state.editingDate != null) {
         DayEditor(
             state = state,
@@ -137,13 +159,27 @@ fun AppRoot(vm: ShiftViewModel = viewModel()) {
 }
 
 @Composable
-private fun Header(state: UiState) {
-    Column(Modifier.fillMaxWidth().padding(horizontal = 16.dp)) {
-        Text(
-            "Календарь смен",
-            fontSize = 24.sp,
-            fontWeight = FontWeight.Bold,
-            color = Palette.Ink
-        )
+private fun Header(onOpenPattern: () -> Unit) {
+    Row(
+        Modifier.fillMaxWidth().padding(horizontal = 16.dp),
+        verticalAlignment = Alignment.CenterVertically
+    ) {
+        Column(Modifier.weight(1f)) {
+            Text(
+                "Календарь смен",
+                fontSize = 24.sp,
+                fontWeight = FontWeight.Bold,
+                color = Palette.Ink
+            )
+        }
+        Box(
+            Modifier
+                .clip(RoundedCornerShape(12.dp))
+                .background(Palette.Ink)
+                .clickable(onClick = onOpenPattern)
+                .padding(horizontal = 14.dp, vertical = 10.dp)
+        ) {
+            Text("Паттерн", color = Color.White, fontSize = 13.sp, fontWeight = FontWeight.SemiBold)
+        }
     }
 }

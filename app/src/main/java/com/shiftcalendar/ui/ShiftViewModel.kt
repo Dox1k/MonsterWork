@@ -39,7 +39,15 @@ data class UiState(
     val editingRate: Double = 0.0,
     val editingNote: String = "",
     val editingDayOff: Boolean = false,
-    val savedFlash: String? = null
+    val savedFlash: String? = null,
+    // ---- паттерн смен ----
+    val patternOpen: Boolean = false,
+    val patternSteps: List<PatternStep> = emptyList(),
+    val patternStart: LocalDate = LocalDate.now(),
+    val patternUntil: LocalDate = LocalDate.now().withDayOfYear(1).plusYears(1).withMonth(12).withDayOfMonth(31),
+    val patternAlignToMonth: Boolean = false,
+    val patternKeepExisting: Boolean = true,
+    val patternPreview: PatternApplyResult? = null
 ) {
     val current: MonthSummary?
         get() = months.firstOrNull { it.ym == selected }
@@ -201,5 +209,129 @@ class ShiftViewModel(app: Application) : AndroidViewModel(app) {
     fun nextYear() {
         _state.value = _state.value.copy(year = _state.value.year + 1)
         refresh()
+    }
+
+    // ---------- Паттерн смен ----------
+
+    fun openPattern() {
+        val today = LocalDate.now()
+        _state.value = _state.value.copy(
+            patternOpen = true,
+            patternSteps = PRESET_PATTERNS.first().second,
+            patternStart = LocalDate.of(today.year, 11, 1).let {
+                // если 1 ноября уже прошло — берём следующее
+                if (it.isBefore(today)) LocalDate.of(today.year + 1, 11, 1) else it
+            },
+            patternUntil = LocalDate.of(today.year + 1, 12, 31),
+            patternAlignToMonth = false,
+            patternKeepExisting = true,
+            patternPreview = null
+        )
+    }
+
+    fun closePattern() {
+        _state.value = _state.value.copy(patternOpen = false, patternSteps = emptyList(), patternPreview = null)
+    }
+
+    fun loadPreset(steps: List<PatternStep>) {
+        _state.value = _state.value.copy(patternSteps = steps, patternPreview = null)
+    }
+
+    fun addStep(isDayOff: Boolean) {
+        val base = _state.value.patternSteps.lastOrNull()
+        val step = PatternStep(
+            isDayOff = isDayOff,
+            kind = base?.kind ?: ShiftKind.DAY,
+            hours = base?.hours ?: DEFAULT_SHIFT_HOURS,
+            rate = base?.rate ?: 0.0
+        )
+        _state.value = _state.value.copy(patternSteps = _state.value.patternSteps + step, patternPreview = null)
+    }
+
+    fun removeStep(index: Int) {
+        val list = _state.value.patternSteps.toMutableList()
+        if (index in list.indices) list.removeAt(index)
+        _state.value = _state.value.copy(patternSteps = list, patternPreview = null)
+    }
+
+    fun updateStep(index: Int, step: PatternStep) {
+        val list = _state.value.patternSteps.toMutableList()
+        if (index in list.indices) {
+            list[index] = step
+            _state.value = _state.value.copy(patternSteps = list, patternPreview = null)
+        }
+    }
+
+    /** Одна ставка на весь цикл — самый частый случай. */
+    fun setAllRates(rate: Double) {
+        val list = _state.value.patternSteps.map { if (it.isDayOff) it else it.copy(rate = rate) }
+        _state.value = _state.value.copy(patternSteps = list, patternPreview = null)
+    }
+
+    fun setPatternStart(date: LocalDate) {
+        _state.value = _state.value.copy(patternStart = date, patternPreview = null)
+    }
+
+    fun setPatternUntil(date: LocalDate) {
+        _state.value = _state.value.copy(patternUntil = date, patternPreview = null)
+    }
+
+    fun setAlignToMonth(value: Boolean) {
+        _state.value = _state.value.copy(patternAlignToMonth = value, patternPreview = null)
+    }
+
+    fun setKeepExisting(value: Boolean) {
+        _state.value = _state.value.copy(patternKeepExisting = value, patternPreview = null)
+    }
+
+    /** Посчитать, что получится, не записывая в базу. */
+    fun previewPattern() {
+        val s = _state.value
+        viewModelScope.launch {
+            val existing = dao.datesBetween(s.patternStart.iso(), s.patternUntil.iso()).toSet()
+            val result = buildPatternShifts(
+                pattern = s.patternSteps,
+                start = s.patternStart,
+                from = s.patternStart,
+                to = s.patternUntil,
+                alignToMonth = s.patternAlignToMonth,
+                keepExisting = s.patternKeepExisting,
+                existingDates = existing
+            )
+            _state.value = _state.value.copy(patternPreview = result)
+        }
+    }
+
+    /** Записать паттерн в календарь. */
+    fun applyPattern() {
+        val s = _state.value
+        if (s.patternSteps.isEmpty()) return
+        viewModelScope.launch {
+            val existing = dao.datesBetween(s.patternStart.iso(), s.patternUntil.iso()).toSet()
+            val result = buildPatternShifts(
+                pattern = s.patternSteps,
+                start = s.patternStart,
+                from = s.patternStart,
+                to = s.patternUntil,
+                alignToMonth = s.patternAlignToMonth,
+                keepExisting = s.patternKeepExisting,
+                existingDates = existing
+            )
+            if (result.shifts.isNotEmpty()) {
+                dao.insertAll(result.shifts)
+                // Напоминания на будущие смены
+                val today = LocalDate.now()
+                result.shifts
+                    .filter { !it.isDayOff && LocalDate.parse(it.date, ISO) >= today }
+                    .forEach { ShiftAlarmScheduler.schedule(appContext, it) }
+            }
+            _state.value = _state.value.copy(
+                patternOpen = false,
+                patternSteps = emptyList(),
+                patternPreview = null,
+                savedFlash = "Паттерн проставлен: ${result.workCount} смен, ${result.dayOffCount} выходных"
+            )
+            refresh()
+        }
     }
 }

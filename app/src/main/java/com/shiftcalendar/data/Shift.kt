@@ -53,6 +53,12 @@ interface ShiftDao {
 
     @Query("DELETE FROM shifts WHERE date = :date")
     suspend fun deleteByDate(date: String)
+
+    @Insert(onConflict = OnConflictStrategy.REPLACE)
+    suspend fun insertAll(shifts: List<Shift>)
+
+    @Query("SELECT date FROM shifts WHERE date >= :from AND date <= :to")
+    suspend fun datesBetween(from: String, to: String): List<String>
 }
 
 @Database(entities = [Shift::class], version = 1, exportSchema = false)
