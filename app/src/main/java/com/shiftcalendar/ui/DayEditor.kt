@@ -37,6 +37,8 @@ fun DayEditor(
     onStepHours: (Double) -> Unit,
     onRate: (Double) -> Unit,
     onNote: (String) -> Unit,
+    onInterval: (String, String) -> Unit,
+    onComplete: () -> Unit,
     onSave: () -> Unit,
     onDelete: () -> Unit,
     onDismiss: () -> Unit
@@ -85,13 +87,19 @@ fun DayEditor(
             }
 
             Spacer(Modifier.height(10.dp))
-            val interval = when {
-                state.editingDayOff -> "Отмечено как выходной"
-                state.editingKind == ShiftKind.DAY -> "Интервал $DAY_START – $DAY_END"
-                state.editingKind == ShiftKind.NIGHT -> "Интервал $NIGHT_START – $NIGHT_END"
-                else -> "Время не задано — считаются только часы"
+            Text(
+                "Интервал: ${state.editingStartTime} – ${state.editingEndTime}",
+                fontSize = 12.sp, color = Palette.Muted
+            )
+            Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
+                OutlinedButton(onClick = { onInterval("${(state.editingStartTime.take(2).toIntOrNull() ?: 8).minus(1).mod(24).toString().padStart(2, '0')}:${state.editingStartTime.drop(3)}", state.editingEndTime) }) { Text("Начало −1ч") }
+                OutlinedButton(onClick = { onInterval("${(state.editingStartTime.take(2).toIntOrNull() ?: 8).plus(1).mod(24).toString().padStart(2, '0')}:${state.editingStartTime.drop(3)}", state.editingEndTime) }) { Text("Начало +1ч") }
             }
-            Text(interval, fontSize = 12.sp, color = Palette.Muted)
+            Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
+                OutlinedButton(onClick = { onInterval(state.editingStartTime, "${(state.editingEndTime.take(2).toIntOrNull() ?: 20).minus(1).mod(24).toString().padStart(2, '0')}:${state.editingEndTime.drop(3)}") }) { Text("Конец −1ч") }
+                OutlinedButton(onClick = { onInterval(state.editingStartTime, "${(state.editingEndTime.take(2).toIntOrNull() ?: 20).plus(1).mod(24).toString().padStart(2, '0')}:${state.editingEndTime.drop(3)}") }) { Text("Конец +1ч") }
+            }
+            Spacer(Modifier.height(10.dp))
 
             if (!state.editingDayOff) {
                 Spacer(Modifier.height(20.dp))
@@ -186,6 +194,10 @@ fun DayEditor(
             )
 
             Spacer(Modifier.height(26.dp))
+            if (!state.editingDayOff && state.editingShift != null && !state.editingShift.completed) {
+                Button(onClick = onComplete, modifier = Modifier.fillMaxWidth()) { Text("Завершить смену и получить банку") }
+                Spacer(Modifier.height(8.dp))
+            }
             Button(
                 onClick = onSave,
                 colors = ButtonDefaults.buttonColors(containerColor = Palette.Ink),

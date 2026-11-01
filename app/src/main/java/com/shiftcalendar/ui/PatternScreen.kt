@@ -14,6 +14,7 @@ import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.foundation.text.KeyboardOptions
 import androidx.compose.foundation.verticalScroll
 import androidx.compose.material3.*
+import androidx.compose.ui.platform.LocalContext
 import androidx.compose.runtime.*
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
@@ -44,6 +45,8 @@ fun PatternScreen(
     onUpdate: (Int, PatternStep) -> Unit,
     onAllRates: (Double) -> Unit,
     onStart: (LocalDate) -> Unit,
+    onThreshold: (String) -> Unit,
+    onPercent: (Double) -> Unit,
     onUntil: (LocalDate) -> Unit,
     onAlign: (Boolean) -> Unit,
     onKeep: (Boolean) -> Unit,
@@ -162,6 +165,39 @@ fun PatternScreen(
             Label("На какой срок")
             Spacer(Modifier.height(8.dp))
             DateRow("Начало цикла", state.patternStart) { onStart(it) }
+            Spacer(Modifier.height(8.dp))
+            var showStartPicker by remember { mutableStateOf(false) }
+            var showThresholdPicker by remember { mutableStateOf(false) }
+            Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
+                OutlinedButton(onClick = { showStartPicker = true }) { Text("Выбрать дату начала") }
+                OutlinedButton(onClick = { showThresholdPicker = true }) { Text("Порог ночи: ${state.nightThreshold}") }
+            }
+            if (showStartPicker) {
+                val context = LocalContext.current
+                LaunchedEffect(Unit) {
+                    android.app.DatePickerDialog(context, { _, y, m, d -> onStart(LocalDate.of(y, m + 1, d)); showStartPicker = false }, state.patternStart.year, state.patternStart.monthValue - 1, state.patternStart.dayOfMonth).show()
+                }
+            }
+            if (showThresholdPicker) {
+                val context = LocalContext.current
+                LaunchedEffect(Unit) {
+                    android.app.TimePickerDialog(context, { _, h, m -> onThreshold("%02d:%02d".format(h, m)); showThresholdPicker = false }, state.nightThreshold.take(2).toIntOrNull() ?: 22, state.nightThreshold.drop(3).take(2).toIntOrNull() ?: 0, true).show()
+                }
+            }
+            Spacer(Modifier.height(8.dp))
+            OutlinedTextField(
+                value = state.nightPremiumPercent.toString(),
+                onValueChange = { it.toDoubleOrNull()?.let(onPercent) },
+                label = { Text("Ночная надбавка, %") },
+                keyboardOptions = KeyboardOptions(keyboardType = KeyboardType.Decimal),
+                modifier = Modifier.fillMaxWidth()
+            )
+            ToggleRow(
+                title = "Без ночной надбавки",
+                subtitle = "Расчёт ведётся без доплаты за ночные часы",
+                checked = state.nightPremiumPercent == 0.0,
+                onChecked = { if (it) onPercent(0.0) else onPercent(20.0) }
+            )
             Spacer(Modifier.height(8.dp))
             DateRow("Проставить до", state.patternUntil) { onUntil(it) }
 

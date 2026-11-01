@@ -25,10 +25,12 @@ data class Shift(
     val date: String,
     val kind: String,
     val hours: Double,
-    val startTime: String?,   // "HH:mm", null для выхода/своей без времени
+    val startTime: String?,   // "HH:mm"
     val rate: Double,         // ставка за час
     val isDayOff: Boolean = false,
-    val note: String = ""
+    val note: String = "",
+    val endTime: String? = null,
+    val completed: Boolean = false
 )
 
 @Dao
@@ -61,7 +63,7 @@ interface ShiftDao {
     suspend fun datesBetween(from: String, to: String): List<String>
 }
 
-@Database(entities = [Shift::class], version = 1, exportSchema = false)
+@Database(entities = [Shift::class], version = 2, exportSchema = false)
 abstract class AppDb : RoomDatabase() {
     abstract fun shifts(): ShiftDao
 }

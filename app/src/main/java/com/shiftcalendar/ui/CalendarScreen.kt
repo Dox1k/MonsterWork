@@ -234,7 +234,7 @@ private fun LegendDot(color: Color, label: String, outline: Boolean = false) {
 
 /** Итоги месяца: смен / часов / сумма. */
 @Composable
-fun MonthTotals(m: MonthSummary?, onScrollToToday: () -> Unit) {
+fun MonthTotals(m: MonthSummary?, onScrollToToday: () -> Unit, threshold: java.time.LocalTime = java.time.LocalTime.of(22, 0), percent: Double = 20.0) {
     val s = m ?: return
     Column(
         Modifier
@@ -250,7 +250,7 @@ fun MonthTotals(m: MonthSummary?, onScrollToToday: () -> Unit) {
         Row(Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.SpaceBetween) {
             TotalItem("Смен", s.shiftCount.toString())
             TotalItem("Часов", formatHours(s.totalHours))
-            TotalItem("Заработок", formatMoney(s.totalEarned), accent = Palette.ShiftRed)
+            TotalItem("Заработок", formatMoney(s.worked.sumOf { shift -> shiftEarnings(shift, threshold, percent) }), accent = Palette.ShiftRed)
         }
         Spacer(Modifier.height(6.dp))
         Text(
@@ -331,9 +331,8 @@ private fun ShiftRow(shift: Shift, onClick: () -> Unit) {
             Text(
                 when {
                     shift.isDayOff -> "Выходной"
-                    shift.kind == "NIGHT" -> "Ночь · ${shift.startTime ?: ""}–${NIGHT_END}"
-                    shift.kind == "DAY" -> "День · ${shift.startTime ?: ""}–${DAY_END}"
-                    else -> "Своя смена"
+                    else -> "${if (shift.kind == "NIGHT") "Ночь" else "День"} · " +
+                        "${shift.startTime ?: ""}–${shift.endTime ?: if (shift.kind == "NIGHT") NIGHT_END else DAY_END}"
                 } + if (shift.note.isNotBlank()) " · ${shift.note}" else "",
                 fontSize = 12.sp,
                 color = Palette.Muted

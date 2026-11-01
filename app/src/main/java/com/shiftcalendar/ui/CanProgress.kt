@@ -5,6 +5,7 @@ import androidx.compose.animation.core.tween
 import androidx.compose.foundation.Canvas
 import androidx.compose.foundation.background
 import androidx.compose.foundation.border
+import androidx.compose.foundation.clickable
 import androidx.compose.foundation.layout.*
 import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.material3.Text
@@ -49,7 +50,7 @@ object BankPalette {
 fun shiftProgress(shift: Shift, now: LocalDateTime = LocalDateTime.now()): Float {
     if (shift.isDayOff) return 0f
     val start = shift.startTime?.let { LocalTime.parse(it) } ?: return 0f
-    val endStr = when (shift.kind) {
+    val endStr = shift.endTime ?: when (shift.kind) {
         "NIGHT" -> NIGHT_END
         "DAY" -> DAY_END
         else -> return 0f
@@ -88,6 +89,7 @@ fun BankProgressCard(shift: Shift, now: LocalDateTime, onOpen: () -> Unit) {
             .clip(RoundedCornerShape(16.dp))
             .background(Palette.CardBg)
             .border(1.dp, Palette.Outline, RoundedCornerShape(16.dp))
+            .clickable(onClick = onOpen)
             .padding(16.dp)
     ) {
         Text(
@@ -140,6 +142,30 @@ fun BankProgressCard(shift: Shift, now: LocalDateTime, onOpen: () -> Unit) {
                 )
             }
         }
+    }
+}
+
+@Composable
+fun MonsterBanks(shift: Shift?, now: LocalDateTime) {
+    Column(Modifier.fillMaxWidth().padding(horizontal = 12.dp).clip(RoundedCornerShape(16.dp)).background(Palette.CardBg).border(1.dp, Palette.Outline, RoundedCornerShape(16.dp)).padding(12.dp)) {
+        Text("Банки монстров", fontSize = 14.sp, fontWeight = FontWeight.Bold, color = Palette.Ink)
+        Spacer(Modifier.height(8.dp))
+        val elapsedHours = if (shift == null) 0.0 else {
+            val start = shift.startTime?.let { LocalDateTime.of(LocalDate.parse(shift.date, ISO), LocalTime.parse(it)) }
+            val end = shift.endTime?.let { LocalDateTime.of(LocalDate.parse(shift.date, ISO), LocalTime.parse(it)) }
+            if (start == null || end == null) 0.0 else {
+                val endAdjusted = if (!end.isAfter(start)) end.plusDays(1) else end
+                (Duration.between(start, now).toMinutes().coerceIn(0, Duration.between(start, endAdjusted).toMinutes()) / 60.0)
+            }
+        }
+        Row(Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.SpaceEvenly) {
+            (0 until 8).forEach { index ->
+                val fill = (elapsedHours - index).coerceIn(0.0, 1.0).toFloat()
+                Can(fill = fill, modifier = Modifier.size(width = 30.dp, height = 54.dp))
+            }
+        }
+        Spacer(Modifier.height(4.dp))
+        Text(if (shift == null) "Выберите смену для прогресса" else "${elapsedHours.toInt()} / 8 часов", fontSize = 11.sp, color = Palette.Muted)
     }
 }
 

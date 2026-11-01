@@ -15,6 +15,22 @@ import kotlinx.coroutines.launch
 import java.time.LocalDate
 import java.time.YearMonth
 
+fun shiftEarnings(shift: Shift, threshold: java.time.LocalTime, percent: Double): Double {
+    if (shift.isDayOff || shift.rate <= 0.0) return 0.0
+    val start = runCatching { java.time.LocalTime.parse(shift.startTime ?: "00:00") }.getOrDefault(java.time.LocalTime.MIDNIGHT)
+    val end = runCatching { java.time.LocalTime.parse(shift.endTime ?: "00:00") }.getOrDefault(java.time.LocalTime.MIDNIGHT)
+    val wraps = !end.isAfter(start)
+    val duration = if (wraps) java.time.Duration.between(start, end).toMinutes() + 1440 else java.time.Duration.between(start, end).toMinutes()
+    val overtime = (0 until duration.toInt()).count { minute ->
+        val time = start.plusMinutes(minute.toLong())
+        !time.isBefore(threshold)
+    }
+    val premiumHours = overtime / 60.0
+    val hours = shift.hours
+    val premiumFraction = (premiumHours / duration.coerceAtLeast(1).toDouble() * hours).coerceIn(0.0, hours)
+    return shift.rate * (hours + premiumFraction * percent.coerceAtLeast(0.0) / 100.0)
+}
+
 /** Один месяц со своими сменами — для ленты месяцев. */
 data class MonthSummary(
     val ym: YearMonth,
@@ -39,6 +55,13 @@ data class UiState(
     val editingRate: Double = 0.0,
     val editingNote: String = "",
     val editingDayOff: Boolean = false,
+    val editingStartTime: String = DAY_START,
+    val editingEndTime: String = DAY_END,
+    val nightThreshold: String = "22:00",
+    val nightPremiumPercent: Double = 20.0,
+    val darkTheme: Boolean = false,
+    val collection: List<CanReward> = emptyList(),
+    val rewardsByShift: Map<Long, String> = emptyMap(),
     val savedFlash: String? = null,
     // ---- паттерн смен ----
     val patternOpen: Boolean = false,
@@ -55,8 +78,17 @@ data class UiState(
 
 class ShiftViewModel(app: Application) : AndroidViewModel(app) {
 
+    private val app = getApplication<Application>()
     private val dao = (app as ShiftApp).db.shifts()
-    private val _state = MutableStateFlow(UiState())
+    private val prefs = app.getSharedPreferences("monsterwork", Application.MODE_PRIVATE)
+    private val _state = MutableStateFlow(UiState(
+        nightThreshold = prefs.getString("night_threshold", "22:00") ?: "22:00",
+        nightPremiumPercent = prefs.getString("night_percent", "20")?.toDoubleOrNull() ?: 20.0,
+        darkTheme = prefs.getBoolean("dark_theme", false),
+        collection = prefs.getStringSet("collection", emptySet())!!.mapNotNull(::decodeReward),
+        rewardsByShift = prefs.all.filterKeys { it.startsWith("reward_") }
+            .mapNotNull { (key, value) -> key.removePrefix("reward_").toLongOrNull()?.let { it to (value as? String ?: return@mapNotNull null) } }.toMap()
+    ))
     val state: StateFlow<UiState> = _state.asStateFlow()
 
     /** Напоминание ставится системно, поэтому переживает закрытие приложения. */
@@ -100,6 +132,8 @@ class ShiftViewModel(app: Application) : AndroidViewModel(app) {
                 editingKind = if (existing == null) ShiftKind.DAY else kind,
                 editingHours = existing?.hours ?: DEFAULT_SHIFT_HOURS,
                 editingRate = existing?.rate ?: defaultRate(),
+                editingStartTime = existing?.startTime ?: if (kind == ShiftKind.NIGHT) NIGHT_START else DAY_START,
+                editingEndTime = existing?.endTime ?: if (kind == ShiftKind.NIGHT) NIGHT_END else DAY_END,
                 editingNote = existing?.note ?: "",
                 editingDayOff = existing?.isDayOff ?: false
             )
@@ -132,6 +166,54 @@ class ShiftViewModel(app: Application) : AndroidViewModel(app) {
         _state.value = _state.value.copy(editingDayOff = value)
     }
 
+    fun setNightThreshold(value: String) {
+        val valid = runCatching { java.time.LocalTime.parse(value) }.isSuccess
+        if (!valid) return
+        prefs.edit().putString("night_threshold", value).apply()
+        _state.value = _state.value.copy(nightThreshold = value)
+        refresh()
+    }
+
+    fun setNightPercent(value: Double) {
+        val percent = value.coerceIn(0.0, 300.0)
+        prefs.edit().putString("night_percent", percent.toString()).apply()
+        _state.value = _state.value.copy(nightPremiumPercent = percent)
+        refresh()
+    }
+
+    fun toggleTheme() {
+        val enabled = !_state.value.darkTheme
+        prefs.edit().putBoolean("dark_theme", enabled).apply()
+        _state.value = _state.value.copy(darkTheme = enabled)
+    }
+
+    fun completeShift(shift: Shift, random: kotlin.random.Random = kotlin.random.Random.Default) {
+        if (shift.isDayOff || shift.completed || _state.value.rewardsByShift.containsKey(shift.id)) return
+        viewModelScope.launch {
+            val reward = drawCan(random)
+            val updated = shift.copy(completed = true)
+            dao.update(updated)
+            val key = encodeReward(reward)
+            val existing = prefs.getStringSet("collection", emptySet())!!.toMutableSet()
+            existing += key
+            prefs.edit().putStringSet("collection", existing).putString("reward_${shift.id}", key).apply()
+            _state.value = _state.value.copy(
+                collection = _state.value.collection + reward,
+                rewardsByShift = _state.value.rewardsByShift + (shift.id to key),
+                savedFlash = "Получена банка: ${reward.flavor} · ${reward.rarity.label}"
+            )
+            refresh()
+        }
+    }
+
+    fun shiftEarnings(shift: Shift): Double = shiftEarnings(
+        shift, java.time.LocalTime.parse(_state.value.nightThreshold), _state.value.nightPremiumPercent
+    )
+
+    fun setInterval(start: String, end: String) {
+        _state.value = _state.value.copy(editingStartTime = start, editingEndTime = end)
+    }
+
     fun stepHours(delta: Double) {
         val next = (_state.value.editingHours + delta).coerceIn(0.5, 24.0)
         _state.value = _state.value.copy(editingHours = next)
@@ -150,8 +232,9 @@ class ShiftViewModel(app: Application) : AndroidViewModel(app) {
         val s = _state.value
         val date = s.editingDate ?: return
         viewModelScope.launch {
-            val (start, end) = when {
+            val (start, defaultEnd) = when {
                 s.editingDayOff -> null to null
+                s.editingStartTime.isNotBlank() -> s.editingStartTime to s.editingEndTime
                 s.editingKind == ShiftKind.DAY -> DAY_START to DAY_END
                 s.editingKind == ShiftKind.NIGHT -> NIGHT_START to NIGHT_END
                 else -> null to null
@@ -164,7 +247,8 @@ class ShiftViewModel(app: Application) : AndroidViewModel(app) {
                 startTime = start,
                 rate = if (s.editingDayOff) 0.0 else s.editingRate,
                 isDayOff = s.editingDayOff,
-                note = s.editingNote.trim()
+                note = s.editingNote.trim(),
+                endTime = defaultEnd
             )
             val shiftId = if (entity.id == 0L) dao.insert(entity) else { dao.update(entity); entity.id }
             // Напоминание за час до смены: снимаем старое, ставим новое.

@@ -18,7 +18,9 @@ import androidx.compose.material3.Scaffold
 import androidx.compose.material3.SnackbarHost
 import androidx.compose.material3.SnackbarHostState
 import androidx.compose.material3.Text
+import androidx.compose.material3.TextButton
 import androidx.compose.material3.lightColorScheme
+import androidx.compose.material3.darkColorScheme
 import androidx.compose.runtime.*
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
@@ -47,8 +49,10 @@ class MainActivity : ComponentActivity() {
             requestNotifications.launch(Manifest.permission.POST_NOTIFICATIONS)
         }
         setContent {
+            val themeVm: ShiftViewModel = viewModel()
+            val themeState by themeVm.state.collectAsState()
             MaterialTheme(
-                colorScheme = lightColorScheme(
+                colorScheme = if (themeState.darkTheme) darkColorScheme() else lightColorScheme(
                     background = Palette.Paper,
                     surface = Palette.Paper,
                     onBackground = Palette.Ink,
@@ -84,7 +88,7 @@ fun AppRoot(vm: ShiftViewModel = viewModel()) {
                 .verticalScroll(rememberScrollState())
         ) {
             Spacer(Modifier.height(12.dp))
-            Header(onOpenPattern = vm::openPattern)
+            Header(onOpenPattern = vm::openPattern, darkTheme = state.darkTheme, onToggleTheme = vm::toggleTheme)
             Spacer(Modifier.height(4.dp))
             MonthStrip(
                 months = state.months,
@@ -116,11 +120,12 @@ fun AppRoot(vm: ShiftViewModel = viewModel()) {
                 onDayClick = vm::openDay
             )
             Spacer(Modifier.height(10.dp))
+            MonsterBanks(shift = running, now = now)
+            Spacer(Modifier.height(10.dp))
             Legend()
             Spacer(Modifier.height(6.dp))
-            MonthTotals(state.current, onScrollToToday = {})
-            Spacer(Modifier.height(12.dp))
             ShiftList(state.current, onClick = vm::openDay)
+            MonthTotals(state.current, onScrollToToday = {}, threshold = java.time.LocalTime.parse(state.nightThreshold), percent = state.nightPremiumPercent)
             Spacer(Modifier.height(32.dp))
         }
     }
@@ -135,6 +140,8 @@ fun AppRoot(vm: ShiftViewModel = viewModel()) {
             onUpdate = vm::updateStep,
             onAllRates = vm::setAllRates,
             onStart = vm::setPatternStart,
+            onThreshold = vm::setNightThreshold,
+            onPercent = vm::setNightPercent,
             onUntil = vm::setPatternUntil,
             onAlign = vm::setAlignToMonth,
             onKeep = vm::setKeepExisting,
@@ -151,6 +158,8 @@ fun AppRoot(vm: ShiftViewModel = viewModel()) {
             onStepHours = vm::stepHours,
             onRate = vm::setRate,
             onNote = vm::setNote,
+            onInterval = vm::setInterval,
+            onComplete = { state.editingShift?.let(vm::completeShift) },
             onSave = vm::save,
             onDelete = vm::deleteCurrent,
             onDismiss = vm::closeEditor
@@ -159,7 +168,7 @@ fun AppRoot(vm: ShiftViewModel = viewModel()) {
 }
 
 @Composable
-private fun Header(onOpenPattern: () -> Unit) {
+private fun Header(onOpenPattern: () -> Unit, darkTheme: Boolean, onToggleTheme: () -> Unit) {
     Row(
         Modifier.fillMaxWidth().padding(horizontal = 16.dp),
         verticalAlignment = Alignment.CenterVertically
@@ -172,6 +181,7 @@ private fun Header(onOpenPattern: () -> Unit) {
                 color = Palette.Ink
             )
         }
+        TextButton(onClick = onToggleTheme) { Text(if (darkTheme) "☀" else "☾", color = Palette.Ink) }
         Box(
             Modifier
                 .clip(RoundedCornerShape(12.dp))
