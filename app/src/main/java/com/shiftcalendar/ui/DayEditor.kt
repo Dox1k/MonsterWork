@@ -28,8 +28,12 @@ import java.time.LocalDate
 
 /**
  * Редактор дня — открывается тапом по дню календаря.
- * Внизу меню с сохранением и удалением. В меню выбора времени есть кнопка
- * перерыва: время перерыва вычитается из времени смены (9 ч − 1 ч = 8 ч).
+ *
+ * День может содержать несколько независимых смен. Список сверху показывает все
+ * смены дня своим цветом (первая — красный, вторая — синий, третья — фиолетовый…),
+ * тап по смене открывает её на правку, «+ Смена» — новую смену того же дня.
+ * Внизу меню с сохранением и удалением; в полях времени есть перерыв:
+ * время перерыва вычитается из времени смены (9 ч − 1 ч = 8 ч).
  */
 @OptIn(ExperimentalMaterial3Api::class)
 @Composable
@@ -48,14 +52,18 @@ fun DayEditor(
     onBreak: (Int) -> Unit,
     onSave: () -> Unit,
     onDelete: () -> Unit,
-    onClose: () -> Unit
+    onClose: () -> Unit,
+    onSelectShift: (Long) -> Unit = {},
+    onNewShift: () -> Unit = {},
+    onClearDay: () -> Unit = {},
+    onClearError: () -> Unit = {}
 ) {
     val date = state.editingDate ?: return
     val existing = state.editingShift
     val isDayOff = state.editingDayOff
-    val hours = state.editingHours
-    val context = LocalContext.current
-
+    val day = state.editingDay
+    val slots = remember(state.editingDayShifts) { shiftSlots(state.editingDayShifts) }
+    val dayHasWork = day.workCount > 0
     // Живой расчёт: сколько выйдет за смену при текущих вводных.
     val preview = remember(state.editingStartTime, state.editingEndTime, state.editingRate, state.editingBreakMinutes, state.nightThreshold, state.nightEnd, state.nightPremiumPercent, isDayOff) {
         val start = normalizeTime(state.editingStartTime)
@@ -85,6 +93,18 @@ fun DayEditor(
         title = {
             Column {
                 Text(dayTitle(date), fontWeight = FontWeight.Bold, fontSize = 18.sp, color = Palette.Ink)
+                // Итог дня: «2 смены · 14 ч» — сразу видно, что смен несколько.
+                Text(
+                    buildString {
+                        if (day.isEmpty) append("смен пока нет")
+                        else {
+                            append(day.workCount).append(if (day.workCount == 1) " смена" else " смены")
+                            if (day.hours > 0) append(" · ").append(formatHours(day.hours))
+                            if (day.dayOff) append(if (dayHasWork) " · выходной" else " · выходной")
+                        }
+                    },
+                    fontSize = 11.sp, color = Palette.Muted
+                )
                 if (existing != null && existing.profileId > 0) {
                     Text(
                         "проставлено профилем — правки сохранятся поверх",
@@ -95,11 +115,55 @@ fun DayEditor(
         },
         text = {
             Column(Modifier.verticalScroll(rememberScrollState())) {
+                // Список смен дня: каждая своим цветом, тап — правка.
+                if (state.editingDayShifts.isNotEmpty()) {
+                    Column(verticalArrangement = Arrangement.spacedBy(6.dp)) {
+                        state.editingDayShifts.forEach { shift ->
+                            DayShiftRow(
+                                shift = shift,
+                                index = slots[shift.id] ?: 0,
+                                isDayOff = shift.isDayOff,
+                                selected = existing?.id == shift.id,
+                                onClick = { onSelectShift(shift.id) }
+                            )
+                        }
+                    }
+                    Spacer(Modifier.height(10.dp))
+                }
+                Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
+                    if (dayHasWork) {
+                        SmallAction(
+                            "＋ Смена",
+                            selected = existing == null,
+                            modifier = Modifier.weight(1f),
+                            onClick = onNewShift
+                        )
+                    }
+                    if (state.editingDayShifts.isNotEmpty()) {
+                        SmallAction(
+                            "Очистить день",
+                            selected = false,
+                            modifier = Modifier.weight(1f),
+                            danger = true,
+                            onClick = onClearDay
+                        )
+                    }
+                }
+                Spacer(Modifier.height(12.dp))
+
                 // День / Ночь / Выходной — «чипы» в цветах темы, не слепящие белый
                 Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
                     ChipChoice("День", !isDayOff && state.editingKind != ShiftKind.NIGHT, Modifier.weight(1f)) { onKind(ShiftKind.DAY) }
                     ChipChoice("Ночь", !isDayOff && state.editingKind == ShiftKind.NIGHT, Modifier.weight(1f)) { onKind(ShiftKind.NIGHT) }
                     ChipChoice("Выходной", isDayOff, Modifier.weight(1f)) { onDayOff(!isDayOff) }
+                }
+
+                if (isDayOff && dayHasWork) {
+                    Spacer(Modifier.height(6.dp))
+                    Text(
+                        "выходной заменит смены этого дня — в дне остаётся что-то одно",
+                        fontSize = 10.sp, color = Palette.ShiftRed
+                    )
                 }
 
                 if (!isDayOff) {
@@ -170,6 +234,19 @@ fun DayEditor(
                         fontSize = 11.sp,
                         color = if (previewHoursCompat(state) == null) Palette.ShiftRed else Palette.Muted
                     )
+                    // Предупреждение о наложении: две смены дня идут одновременно.
+                    val overlaps = remember(state.editingDayShifts, state.editingStartTime, state.editingEndTime, existing) {
+                        val probe = probeShift(state, date)
+                        val others = state.editingDayShifts.filter { it.id != (existing?.id ?: -1L) }
+                        probe != null && others.any { MultiShift.overlaps(it, probe) }
+                    }
+                    if (overlaps) {
+                        Spacer(Modifier.height(2.dp))
+                        Text(
+                            "накладывается на другую смену этого дня",
+                            fontSize = 10.sp, color = Palette.ShiftRed
+                        )
+                    }
                 }
 
                 Spacer(Modifier.height(14.dp))
@@ -226,12 +303,27 @@ fun DayEditor(
                     ),
                     modifier = Modifier.fillMaxWidth()
                 )
+
+                // Причина отказа сохранения (пустое время, дубликат смены).
+                state.editorError?.let { error ->
+                    Spacer(Modifier.height(10.dp))
+                    Box(
+                        Modifier
+                            .fillMaxWidth()
+                            .clip(RoundedCornerShape(10.dp))
+                            .background(Palette.ShiftRed.copy(alpha = 0.10f))
+                            .clickable(onClick = onClearError)
+                            .padding(10.dp)
+                    ) {
+                        Text(error, fontSize = 11.sp, color = Palette.ShiftRed, fontWeight = FontWeight.Medium)
+                    }
+                }
             }
         },
         confirmButton = {
             Button(
                 onClick = onSave,
-                colors = ButtonDefaults.buttonColors(containerColor = Palette.Ink, contentColor = Palette.OnInk),
+                colors = accentButtonColors(),
                 shape = RoundedCornerShape(12.dp)
             ) { Text(if (existing == null) "Добавить" else "Сохранить") }
         },
@@ -249,6 +341,101 @@ fun DayEditor(
             ) { Text("Закрыть", color = Palette.Ink) }
             }
         }
+    )
+}
+
+/** Строка смены в списке дня: цвет-слот, время, часы, заметка. */
+@Composable
+private fun DayShiftRow(
+    shift: Shift,
+    index: Int,
+    isDayOff: Boolean,
+    selected: Boolean,
+    onClick: () -> Unit
+) {
+    val accent = ShiftSlotColors.colorFor(index, isDayOff)
+    Row(
+        Modifier
+            .fillMaxWidth()
+            .clip(RoundedCornerShape(10.dp))
+            .background(if (selected) accent.copy(alpha = 0.12f) else Palette.CardBg)
+            .border(
+                width = if (selected) 2.dp else 1.dp,
+                color = if (selected) accent else Palette.Outline,
+                shape = RoundedCornerShape(10.dp)
+            )
+            .clickable(onClick = onClick)
+            .padding(horizontal = 10.dp, vertical = 8.dp),
+        verticalAlignment = Alignment.CenterVertically
+    ) {
+        Box(Modifier.size(10.dp).clip(CircleShape).background(accent))
+        Spacer(Modifier.width(8.dp))
+        Column(Modifier.weight(1f)) {
+            Text(
+                if (isDayOff) "выходной"
+                else "${shift.startTime ?: "—"}–${shift.endTime ?: "?"}",
+                fontSize = 13.sp,
+                fontWeight = FontWeight.SemiBold,
+                color = Palette.Ink
+            )
+            Text(
+                buildString {
+                    if (!isDayOff) append(formatHours(shift.hours))
+                    if (shift.breakMinutes > 0) {
+                        if (isNotEmpty()) append(" · ")
+                        append("перерыв ${shift.breakMinutes} мин")
+                    }
+                    if (shift.note.isNotBlank()) {
+                        if (isNotEmpty()) append(" · ")
+                        append(shift.note)
+                    }
+                    if (isEmpty()) append(if (isDayOff) "день отдыха" else "без времени")
+                },
+                fontSize = 10.sp,
+                color = Palette.Muted,
+                maxLines = 1,
+                overflow = androidx.compose.ui.text.style.TextOverflow.Ellipsis
+            )
+        }
+        if (selected) {
+            Text("✎", fontSize = 13.sp, color = accent)
+        }
+    }
+}
+
+/** Маленькая кнопка-действие рядом со списком смен. */
+@Composable
+private fun SmallAction(
+    label: String,
+    selected: Boolean,
+    modifier: Modifier = Modifier,
+    danger: Boolean = false,
+    onClick: () -> Unit
+) {
+    val accent = if (danger) Palette.ShiftRed else Palette.Ink
+    Box(
+        modifier
+            .height(34.dp)
+            .clip(RoundedCornerShape(9.dp))
+            .background(if (selected) accent.copy(alpha = 0.14f) else Palette.CardBg)
+            .border(1.dp, if (selected) accent else Palette.Outline, RoundedCornerShape(9.dp))
+            .clickable(onClick = onClick),
+        contentAlignment = Alignment.Center
+    ) {
+        Text(label, fontSize = 12.sp, color = accent, fontWeight = FontWeight.Medium)
+    }
+}
+
+/** Смена по текущим полям редактора — для проверки наложения на другие смены дня. */
+private fun probeShift(state: UiState, date: LocalDate): Shift? {
+    if (state.editingDayOff) return null
+    val start = normalizeTime(state.editingStartTime) ?: return null
+    val end = normalizeTime(state.editingEndTime) ?: return null
+    return Shift(
+        id = state.editingShift?.id ?: 0L,
+        date = date.iso(), kind = "CUSTOM", hours = 0.0,
+        startTime = start, rate = state.editingRate,
+        isDayOff = false, endTime = end, breakMinutes = state.editingBreakMinutes
     )
 }
 

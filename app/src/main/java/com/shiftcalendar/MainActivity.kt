@@ -131,23 +131,31 @@ fun AppRoot(vm: ShiftViewModel = viewModel()) {
     }
 
     if (state.editingDate != null) {
-        DayEditor(
-            state = state,
-            onDayOff = vm::setDayOff,
-            onRate = vm::setRate,
-            onNote = vm::setNote,
-            onKind = vm::setKind,
-            onStartText = { s -> vm.setInterval(s, state.editingEndTime) },
-            onEndText = { e -> vm.setInterval(state.editingStartTime, e) },
-            onPickStart = vm::pickStart,
-            onPickEnd = vm::pickEnd,
-            onNudgeStart = vm::nudgeStart,
-            onNudgeEnd = vm::nudgeEnd,
-            onBreak = vm::setBreakMinutes,
-            onSave = vm::save,
-            onDelete = vm::deleteCurrent,
-            onClose = vm::closeEditor
-        )
+        // Ключ по поколению редактора: при переходе на другую смену дня поля
+        // монтируются заново, иначе в них остался бы текст предыдущей смены.
+        androidx.compose.runtime.key(state.editorGeneration) {
+            DayEditor(
+                state = state,
+                onDayOff = vm::setDayOff,
+                onRate = vm::setRate,
+                onNote = vm::setNote,
+                onKind = vm::setKind,
+                onStartText = { s -> vm.setInterval(s, state.editingEndTime) },
+                onEndText = { e -> vm.setInterval(state.editingStartTime, e) },
+                onPickStart = vm::pickStart,
+                onPickEnd = vm::pickEnd,
+                onNudgeStart = vm::nudgeStart,
+                onNudgeEnd = vm::nudgeEnd,
+                onBreak = vm::setBreakMinutes,
+                onSave = vm::save,
+                onDelete = vm::deleteCurrent,
+                onClose = vm::closeEditor,
+                onSelectShift = vm::selectEditingShift,
+                onNewShift = vm::startNewShift,
+                onClearDay = vm::clearEditingDay,
+                onClearError = vm::clearEditorError
+            )
+        }
     }
 }
 

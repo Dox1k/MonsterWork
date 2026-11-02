@@ -42,8 +42,21 @@ class ShiftIntervalTest {
     fun `ночной интервал считается через полночь`() {
         assertEquals(12.0, intervalHours("20:00", "08:00")!!, 0.001)
         assertEquals(7.5, intervalHours("22:00", "05:30")!!, 0.001)
-        // равные концы — сутки
-        assertEquals(24.0, intervalHours("08:00", "08:00")!!, 0.001)
+        // 23:59–00:00 — минута, а не «сутки»: важно, что равные концы отсекаются
+        // раньше, а разные — считаются как переход через полночь.
+        assertEquals(1.0 / 60.0, intervalHours("23:59", "00:00")!!, 0.001)
+    }
+
+    @Test
+    fun `равные начало и конец — невалидный интервал, а не сутки`() {
+        assertNull(intervalHours("08:00", "08:00"))
+        assertNull(intervalHours("8:0", "08:00"))
+        assertNull(intervalHours("00:00", "00:00"))
+        assertTrue(isDegenerateInterval("08:00", "08:00"))
+        assertFalse(isDegenerateInterval("08:00", "20:00"))
+        assertFalse(isDegenerateInterval("08:00", null))
+        // Сутки задаются разными концами — 00:00–23:59 это 23 ч 59 мин.
+        assertEquals(1439.0 / 60.0, intervalHours("00:00", "23:59")!!, 0.001)
     }
 
     @Test

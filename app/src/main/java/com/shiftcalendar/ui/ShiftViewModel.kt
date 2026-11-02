@@ -55,7 +55,16 @@ data class UiState(
     val today: LocalDate = LocalDate.now(),
     val months: List<MonthSummary> = emptyList(),
     val editingDate: LocalDate? = null,
+    /** Смена, которую правят; null — в редакторе новая смена этого дня. */
     val editingShift: Shift? = null,
+    /** ВСЕ смены открытого дня, в порядке отображения (может быть несколько). */
+    val editingDayShifts: List<Shift> = emptyList(),
+    /**
+     * Смена сменилась (сохранена/выбрана другая) — редактор монтируется заново,
+     * чтобы поля не показывали ввод предыдущей смены. Поле времени компоузится
+     * с автосохранением состояния, поэтому без явного ключа остался бы старый текст.
+     */
+    val editorGeneration: Int = 0,
     val editingKind: ShiftKind = ShiftKind.DAY,
     val editingHours: Double = DEFAULT_SHIFT_HOURS,
     val editingRate: Double = 0.0,
@@ -65,6 +74,8 @@ data class UiState(
     val editingEndTime: String = DAY_END,
     /** Перерыв редактируемой смены, минуты — вычитается из времени смены. */
     val editingBreakMinutes: Int = 0,
+    /** Причина, по которой смену нельзя сохранить (показывается в редакторе). */
+    val editorError: String? = null,
     // ---- надбавка: окно и процент ----
     /** С этого времени часы смены считаются с надбавкой. */
     val nightThreshold: String = "22:00",
@@ -102,6 +113,12 @@ data class UiState(
     /** Профиль, чьи смены сейчас редактируются (null — не выбран). */
     val selectedProfile: PatternProfile?
         get() = profiles.firstOrNull { it.id == selectedProfileId }
+
+    /** Итог дня в редакторе: все смены, часы, признак выходного. */
+    val editingDay: DaySummary get() = summarizeDay(editingDayShifts)
+
+    /** Выходной в редакторе: выбран режим «Выходной» или он уже стоит у дня. */
+    val editingHasDayOff: Boolean get() = editingDayOff || editingDay.dayOff
 }
 
 class ShiftViewModel(app: Application) : AndroidViewModel(app) {
@@ -185,30 +202,70 @@ class ShiftViewModel(app: Application) : AndroidViewModel(app) {
         _state.value = _state.value.copy(selected = ym)
     }
 
+    /**
+     * Открыть день. В редактор попадают ВСЕ смены дня: первая открывается на
+     * правку, остальные видны списком и выбираются тапом. Пустой день сразу
+     * получает поля новой смены с интервалом по умолчанию.
+     */
     fun openDay(date: LocalDate) {
         viewModelScope.launch {
-            val existing = dao.byDate(date.iso())
-            val kind = existing?.kind?.let { runCatching { ShiftKind.valueOf(it) }.getOrNull() } ?: ShiftKind.DAY
-            val defaults = defaultInterval(kind)
-            val startIn = if (existing == null) defaults.first
-            else existing.startTime ?: (if (existing.isDayOff) "" else defaults.first)
-            val endIn = if (existing == null) defaults.second
-            else existing.endTime ?: (if (existing.isDayOff) "" else defaults.second)
-            _state.value = _state.value.copy(
-                editingDate = date,
-                editingShift = existing,
-                editingKind = if (existing == null) ShiftKind.DAY else kind,
-                editingHours = existing?.hours
-                    ?: (intervalHours(startIn, endIn) ?: DEFAULT_SHIFT_HOURS),
-                editingRate = existing?.rate ?: defaultRate(),
-                editingStartTime = startIn,
-                editingEndTime = endIn,
-                editingBreakMinutes = existing?.breakMinutes ?: 0,
-                editingNote = existing?.note ?: "",
-                editingDayOff = existing?.isDayOff ?: false
-            )
+            val all = dao.allOnDate(date.iso()).orEmpty()
+            val current = all.firstOrNull { !it.isDayOff } ?: all.firstOrNull()
+            _state.value = _state.value.copy(editingDate = date, editingDayShifts = all)
+            loadIntoEditor(current)
         }
     }
+
+    /** Открыть на правку конкретную смену открытого дня. */
+    fun selectEditingShift(id: Long) {
+        val target = _state.value.editingDayShifts.firstOrNull { it.id == id } ?: return
+        loadIntoEditor(target)
+    }
+
+    /** Перечитать смены открытого дня после записи в базу. */
+    private suspend fun reloadEditingDay(date: LocalDate): List<Shift> =
+        dao.allOnDate(date.iso()).orEmpty().also { list ->
+            _state.value = _state.value.copy(editingDayShifts = list)
+        }
+
+    /**
+     * Заполнить поля редактора по смене (null — новая смена).
+     * Ставка берётся у предыдущей смены дня, чтобы её не вводить заново.
+     */
+    private fun loadIntoEditor(shift: Shift?) {
+        val s = _state.value
+        val kind = shift?.kind?.let { runCatching { ShiftKind.valueOf(it) }.getOrNull() } ?: ShiftKind.DAY
+        val defaults = defaultInterval(kind)
+        val startIn = when {
+            shift == null -> defaults.first
+            shift.startTime != null -> shift.startTime
+            shift.isDayOff -> ""
+            else -> defaults.first
+        }
+        val endIn = when {
+            shift == null -> defaults.second
+            shift.endTime != null -> shift.endTime
+            shift.isDayOff -> ""
+            else -> defaults.second
+        }
+        val rate = shift?.rate?.takeIf { it > 0.0 } ?: defaultRate()
+        _state.value = s.copy(
+            editingShift = shift,
+            editorGeneration = s.editorGeneration + 1,
+            editingKind = if (shift == null) ShiftKind.DAY else kind,
+            editingHours = shift?.hours ?: (intervalHours(startIn, endIn) ?: DEFAULT_SHIFT_HOURS),
+            editingRate = rate,
+            editingStartTime = startIn,
+            editingEndTime = endIn,
+            editingBreakMinutes = shift?.breakMinutes ?: 0,
+            editingNote = shift?.note ?: "",
+            editingDayOff = shift?.isDayOff ?: false,
+            editorError = null
+        )
+    }
+
+    /** «+ Смена» в редакторе: поля пустые под новую смену, выбор — снять. */
+    fun startNewShift() = loadIntoEditor(null)
 
     /** Ставка последней сохранённой смены — чтобы не вводить её каждый раз. */
     private fun defaultRate(): Double {
@@ -217,7 +274,19 @@ class ShiftViewModel(app: Application) : AndroidViewModel(app) {
     }
 
     fun closeEditor() {
-        _state.value = _state.value.copy(editingDate = null, editingShift = null)
+        _state.value = _state.value.copy(
+            editingDate = null,
+            editingShift = null,
+            editingDayShifts = emptyList(),
+            editorError = null
+        )
+    }
+
+    /** Снять подсказку об ошибке (тап по плашке в редакторе). */
+    fun clearEditorError() {
+        if (_state.value.editorError != null) {
+            _state.value = _state.value.copy(editorError = null)
+        }
     }
 
     fun setKind(kind: ShiftKind) {
@@ -311,7 +380,8 @@ class ShiftViewModel(app: Application) : AndroidViewModel(app) {
                 s.editingDayOff -> 0.0
                 hours != null -> hours
                 else -> s.editingHours
-            }
+            },
+            editorError = null
         )
     }
 
@@ -347,71 +417,106 @@ class ShiftViewModel(app: Application) : AndroidViewModel(app) {
         _state.value = _state.value.copy(editingNote = note)
     }
 
-    /** Сохранить смену или выходной на выбранный день. */
+    /**
+     * Сохранить смену или выходной. В день можно добавить сколько угодно смен:
+     * сохранение пишет ровно одну строку (новую или правленую), остальные смены
+     * дня не трогаются. Дубликат по времени и вырожденный интервал не пишутся —
+     * вместо тихой второй одинаковой строки в редакторе показывается причина.
+     */
     fun save() {
         val s = _state.value
         val date = s.editingDate ?: return
         viewModelScope.launch {
-            val (start, end) = when {
-                s.editingDayOff -> null to null
-                else -> {
-                    val st = normalizeTime(s.editingStartTime)
-                    val en = normalizeTime(s.editingEndTime)
-                    if (st != null && en != null) st to en else defaultInterval(s.editingKind)
-                }
+            val plan = planShift(draftFrom(s, date), s.editingDayShifts)
+            if (plan is ShiftPlan.Invalid) {
+                _state.value = _state.value.copy(editorError = plan.reason)
+                return@launch
             }
-            // Свой интервал = своя длительность (ночь считается через полночь);
-            // перерыв вычитается, оплачиваемые часы не уходят в минус.
-            val hours = when {
-                s.editingDayOff -> 0.0
-                start != null && end != null -> (intervalHours(start, end) ?: s.editingHours) - s.editingBreakMinutes / 60.0
-                else -> s.editingHours
-            }.coerceAtLeast(0.0)
-            val kind = when {
-                s.editingDayOff -> s.editingKind
-                start != null && end != null -> kindForInterval(s.editingKind, start, end)
-                else -> s.editingKind
+            val entity = (plan as ShiftPlan.Ready).shift
+            val existing = s.editingShift
+            val shiftId = if (existing == null || existing.id == 0L) {
+                dao.insert(entity)
+            } else {
+                dao.update(entity)
+                entity.id
             }
-            val entity = Shift(
-                id = s.editingShift?.id ?: 0,
-                date = date.iso(),
-                kind = kind.name,
-                hours = hours,
-                startTime = start,
-                rate = if (s.editingDayOff) 0.0 else s.editingRate,
-                isDayOff = s.editingDayOff,
-                note = s.editingNote.trim(),
-                endTime = end,
-                breakMinutes = if (s.editingDayOff) 0 else s.editingBreakMinutes,
-                profileId = s.editingShift?.profileId ?: 0
-            )
-            val shiftId = if (entity.id == 0L) dao.insert(entity) else { dao.update(entity); entity.id }
-            // Напоминание за час до смены: снимаем старое, ставим новое.
-            ShiftAlarmScheduler.cancel(appContext, s.editingShift ?: entity.copy(id = shiftId))
+            // Напоминание за час до смены: id смены — requestCode системного
+            // будильника, поэтому у каждой смены дня своё напоминание.
+            if (existing != null) ShiftAlarmScheduler.cancel(appContext, existing)
             val withId = entity.copy(id = shiftId)
             if (!withId.isDayOff) ShiftAlarmScheduler.schedule(appContext, withId)
             _state.value = _state.value.copy(
-                editingDate = null,
-                editingShift = null,
-                savedFlash = if (withId.isDayOff) "Выходной отмечен"
-                else if (withId.startTime != null) "Сохранено · напомню за час до смены"
-                else "Сохранено"
+                savedFlash = when {
+                    withId.isDayOff -> "Выходной отмечен"
+                    withId.startTime != null -> "Смена сохранена · напомню за час"
+                    else -> "Смена сохранена"
+                }
             )
+            // День остаётся открытым: можно сразу добавить вторую смену.
+            reloadEditingDay(date)
+            // Выходной и рабочие смены в одном дне несовместимы — оставляем
+            // одну сторону, чтобы день не был одновременно выходным и рабочим.
+            val conflicts = reconcileDayConflicts(_state.value.editingDayShifts, fresh = shiftId)
+            conflicts.forEach { doomed ->
+                ShiftAlarmScheduler.cancel(appContext, doomed)
+                dao.delete(doomed)
+            }
+            val reloaded = if (conflicts.isEmpty()) _state.value.editingDayShifts else reloadEditingDay(date)
+            val stillThere = reloaded.firstOrNull { it.id == shiftId }
+            if (stillThere != null) {
+                // Правленая смена могла сменить время — перечитываем поля из базы.
+                loadIntoEditor(stillThere)
+            } else {
+                loadIntoEditor(reloaded.firstOrNull { !it.isDayOff } ?: reloaded.firstOrNull())
+            }
             refresh()
         }
     }
 
+    /** Черновик смены из полей редактора — вход для [planShift]. */
+    private fun draftFrom(s: UiState, date: LocalDate) = ShiftDraft(
+        id = s.editingShift?.id ?: 0L,
+        date = date.iso(),
+        isDayOff = s.editingDayOff,
+        kind = s.editingKind,
+        startTime = s.editingStartTime,
+        endTime = s.editingEndTime,
+        breakMinutes = s.editingBreakMinutes,
+        rate = s.editingRate,
+        note = s.editingNote,
+        profileId = s.editingShift?.profileId ?: 0L,
+        fallbackHours = s.editingHours
+    )
+
+    /**
+     * Удалить правленую смену — только её: другие смены дня остаются.
+     * Если правленая не выбрана (в редакторе новая смена), удаляется смена дня,
+     * которую пользователь открыл первым делом… — но такой смены нет, поэтому
+     * в этом случае удалять нечего и кнопка в редакторе не показывается.
+     */
     fun deleteCurrent() {
         val date = _state.value.editingDate ?: return
-        val existing = _state.value.editingShift
+        val target = _state.value.editingShift ?: return
         viewModelScope.launch {
+            ShiftAlarmScheduler.cancel(appContext, target)
+            dao.delete(target)
+            val reloaded = reloadEditingDay(date)
+            loadIntoEditor(reloaded.firstOrNull { !it.isDayOff } ?: reloaded.firstOrNull())
+            _state.value = _state.value.copy(savedFlash = "Смена удалена")
+            refresh()
+        }
+    }
+
+    /** Убрать все смены открытого дня (кнопка «Очистить день»). */
+    fun clearEditingDay() {
+        val date = _state.value.editingDate ?: return
+        viewModelScope.launch {
+            _state.value.editingDayShifts.filter { !it.isDayOff }
+                .forEach { ShiftAlarmScheduler.cancel(appContext, it) }
             dao.deleteByDate(date.iso())
-            existing?.let { ShiftAlarmScheduler.cancel(appContext, it) }
-            _state.value = _state.value.copy(
-                editingDate = null,
-                editingShift = null,
-                savedFlash = "Удалено"
-            )
+            reloadEditingDay(date)
+            loadIntoEditor(null)
+            _state.value = _state.value.copy(savedFlash = "День очищен")
             refresh()
         }
     }
@@ -800,4 +905,12 @@ class ShiftViewModel(app: Application) : AndroidViewModel(app) {
     /** Цвет заливки дня календаря по профилю смены (null — вне дня). */
     fun colorForShiftProfile(): Map<Long, Pair<Long, Long>> =
         _state.value.profiles.associate { it.id to (it.workColor to it.dayOffColor) }
+
+    /** Сколько смен в работе прямо сейчас — для подписи «сейчас идут 2». */
+    fun activeShiftsNowCount(): Int =
+        activeShiftsAt(_state.value.months.flatMap { it.shifts }, _state.value.now)
+
+    /** Одна смена из идущих прямо сейчас (для живого заработка на карточке). */
+    fun activeShiftNow(): Shift? =
+        activeShiftNow(_state.value.months.map { it.shifts }, _state.value.now)
 }

@@ -9,6 +9,7 @@ import androidx.room.OnConflictStrategy
 import androidx.room.PrimaryKey
 import androidx.room.Query
 import androidx.room.RoomDatabase
+import androidx.room.Transaction
 import androidx.room.Update
 import kotlinx.coroutines.flow.Flow
 
@@ -42,6 +43,21 @@ interface ShiftDao {
     @Query("SELECT * FROM shifts WHERE date = :date LIMIT 1")
     suspend fun byDate(date: String): Shift?
 
+    /**
+     * ВСЕ смены дня, в стабильном порядке: сначала более раннее начало,
+     * затем по id. День может содержать несколько независимых смен
+     * (например, подработка днём и дежурство ночью).
+     *
+     * Выходные и смены без времени идут в конце: строка '99:99' больше любой
+     * реальной «ЧЧ:ММ», COALESCE подставляет её только для NULL.
+     */
+    @Query(
+        "SELECT * FROM shifts WHERE date = :date " +
+            "ORDER BY CASE WHEN isDayOff = 1 OR startTime IS NULL THEN 1 ELSE 0 END, " +
+            "COALESCE(startTime, '99:99'), id"
+    )
+    suspend fun allOnDate(date: String): List<Shift>?
+
     @Query("SELECT * FROM shifts WHERE date LIKE :monthPrefix || '%'")
     fun byMonth(monthPrefix: String): Flow<List<Shift>>
 
@@ -63,8 +79,60 @@ interface ShiftDao {
     @Insert(onConflict = OnConflictStrategy.REPLACE)
     suspend fun insertAll(shifts: List<Shift>)
 
+    /** Записать пачку смен и вернуть их id — для напоминаний. */
+    @Insert(onConflict = OnConflictStrategy.REPLACE)
+    suspend fun insertAllReturningIds(shifts: List<Shift>): List<Long>
+
     @Query("SELECT date FROM shifts WHERE date >= :from AND date <= :to")
     suspend fun datesBetween(from: String, to: String): List<String>
+
+    /** Все смены календаря — для полной очистки и снятия напоминаний. */
+    @Query("SELECT * FROM shifts")
+    suspend fun all(): List<Shift>
+
+    /** Удалить все смены одним оператором — «очистить календарь». */
+    @Query("DELETE FROM shifts")
+    suspend fun deleteAll()
+
+    /** Существует ли смена на дату — без чтения всей строки. */
+    @Query("SELECT COUNT(*) FROM shifts WHERE date = :date")
+    suspend fun countOn(date: String): Int
+
+    /** Сколько дат интервала уже занято сменами — для честного «заменено N». */
+    @Query("SELECT COUNT(*) FROM shifts WHERE date >= :from AND date <= :to")
+    suspend fun countBetween(from: String, to: String): Int
+
+    /**
+     * Атомарная замена диапазона: в ОДНОЙ транзакции удаляются смены и
+     * записывается новая пачка. Без транзакции падение между DELETE и INSERT
+     * оставляло календарь с дырой вместо старых смен.
+     *
+     * @param profileId если > 0 — удаляются только смены этого профиля
+     *   (самозамена); 0 или отрицательное — удаляются все смены интервала.
+     */
+    @Transaction
+    suspend fun replaceBetween(
+        from: String,
+        to: String,
+        shifts: List<Shift>,
+        profileId: Long = 0L
+    ): List<Long> {
+        require(from <= to) { "replaceBetween: from=$from > to=$to" }
+        if (profileId > 0L) deleteBetweenOfProfile(from, to, profileId) else deleteBetween(from, to)
+        return if (shifts.isEmpty()) emptyList() else insertAllReturningIds(shifts)
+    }
+
+    /** Атомарно стереть все смены. */
+    @Transaction
+    suspend fun clearAll() {
+        deleteAll()
+    }
+
+    /** Атомарно стереть все смены одного профиля. */
+    @Transaction
+    suspend fun clearProfile(profileId: Long) {
+        deleteByProfile(profileId)
+    }
 
     /** Все смены интервала (включительно) — для замены паттерном. */
     @Query("SELECT * FROM shifts WHERE date >= :from AND date <= :to")

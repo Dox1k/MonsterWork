@@ -57,7 +57,8 @@ fun MonthScreen(
     onClearShiftsDismiss: () -> Unit
 ) {
     Column(Modifier.fillMaxSize()) {
-        YearRow(state.year, state.selected, onPrevYear, onNextYear)
+        YearRow(state.year, onPrevYear, onNextYear)
+        Spacer(Modifier.height(6.dp))
         MonthStrip(state, onSelectMonth)
         Column(
             Modifier
@@ -122,20 +123,31 @@ fun MonthScreen(
     }
 }
 
-/** Заголовок года: ‹ 2026 › — переключает год целиком. */
+/**
+ * Заголовок года: ‹ 2026 › — переключает год целиком.
+ *
+ * Раньше справа стояли стрелки года плюс дублирующая подпись «10.2026», и
+ * выглядело это как навигация по месяцу — а рядом уже есть полоса месяцев и
+ * заголовок месяца со своими стрелками. Теперь в строке ровно одно действие
+ * (год), поэтому спор убран: «‹ 2026 ›» по центру на всю ширину.
+ */
 @Composable
-private fun YearRow(year: Int, selected: YearMonth, onPrev: () -> Unit, onNext: () -> Unit) {
+private fun YearRow(year: Int, onPrev: () -> Unit, onNext: () -> Unit) {
     Row(
         Modifier.fillMaxWidth().padding(horizontal = 16.dp, vertical = 4.dp),
-        horizontalArrangement = Arrangement.SpaceBetween,
+        horizontalArrangement = Arrangement.Center,
         verticalAlignment = Alignment.CenterVertically
     ) {
-        Text("«$year»", fontSize = 16.sp, fontWeight = FontWeight.Bold, color = Palette.Ink)
-        Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
-            NavArrow("‹", onPrev)
-            Text("${selected.monthValue.toString().padStart(2, '0')}.${selected.year}", fontSize = 13.sp, color = Palette.Muted, fontWeight = FontWeight.Medium)
-            NavArrow("›", onNext)
-        }
+        NavArrow("‹", onPrev)
+        Text(
+            "$year",
+            fontSize = 16.sp,
+            fontWeight = FontWeight.Bold,
+            color = Palette.Ink,
+            textAlign = TextAlign.Center,
+            modifier = Modifier.widthIn(min = 76.dp)
+        )
+        NavArrow("›", onNext)
     }
 }
 
@@ -204,7 +216,9 @@ private fun MonthStrip(state: UiState, onSelect: (YearMonth) -> Unit) {
 private fun CalendarGrid(state: UiState, onOpenDay: (LocalDate) -> Unit, onPrevMonth: () -> Unit, onNextMonth: () -> Unit) {
     val ym = state.selected
     val summary = state.months.firstOrNull { it.ym == ym }
-    val shiftsByDate: Map<String, Shift> = summary?.shifts?.associateBy { it.date } ?: emptyMap()
+    // День может содержать несколько смен — в ячейку попадает весь список,
+    // а не одна случайная строка (associateBy оставлял бы только последнюю).
+    val shiftsByDate: Map<String, List<Shift>> = summary?.shifts?.let { MultiShift.byDate(it) } ?: emptyMap()
     val cells = monthCells(ym)
     val monthsShift = state.months
     val prevMonth = ym.minusMonths(1)
@@ -219,11 +233,19 @@ private fun CalendarGrid(state: UiState, onOpenDay: (LocalDate) -> Unit, onPrevM
             Text(
                 monthTitleRu(ym),
                 fontSize = 20.sp, fontWeight = FontWeight.Bold, color = Palette.Ink,
-                modifier = Modifier.weight(1f)
+                maxLines = 1,
+                overflow = androidx.compose.ui.text.style.TextOverflow.Ellipsis,
+                modifier = Modifier.weight(1f, fill = false)
             )
-            NavArrow("‹", onPrevMonth)
-            Spacer(Modifier.width(8.dp))
-            NavArrow("›", onNextMonth)
+            Spacer(Modifier.width(12.dp))
+            // Стрелки месяца — одной группой, чтобы не разъезжались и не сжимались
+            Row(
+                horizontalArrangement = Arrangement.spacedBy(8.dp),
+                verticalAlignment = Alignment.CenterVertically
+            ) {
+                NavArrow("‹", onPrevMonth)
+                NavArrow("›", onNextMonth)
+            }
         }
         Spacer(Modifier.height(8.dp))
         // Дни недели Пн..Вс
@@ -240,7 +262,7 @@ private fun CalendarGrid(state: UiState, onOpenDay: (LocalDate) -> Unit, onPrevM
                         if (day != null) {
                             DayCell(
                                 date = day,
-                                shift = shiftsByDate[day.iso()],
+                                dayShifts = shiftsByDate[day.iso()].orEmpty(),
                                 isToday = day == state.today,
                                 inSelectedMonth = day.monthValue == ym.monthValue,
                                 state = state,
@@ -256,58 +278,113 @@ private fun CalendarGrid(state: UiState, onOpenDay: (LocalDate) -> Unit, onPrevM
     }
 }
 
+/**
+ * Ячейка дня. Работает и для одного денька, и для дня с несколькими сменами:
+ *  - фон — цвет первой смены (или цвета профиля, если он их задал);
+ *  - под числом — по тонкой полоске на каждую смену, каждая своим цветом,
+ *    так что вторая смена видна даже если она накладывается на первую;
+ *  - у дня с одной сменой подпись остаётся временем «08:00–20:00», у дня с
+ *    несколькими — «2 см · 14 ч», иначе в 44 dp не влезет ничего читаемого.
+ */
 @Composable
 private fun DayCell(
     date: LocalDate,
-    shift: Shift?,
+    dayShifts: List<Shift>,
     isToday: Boolean,
     inSelectedMonth: Boolean,
     state: UiState,
     onOpen: (LocalDate) -> Unit
 ) {
-    // Цвет дня: свой профиль — его цвета; иначе красный/зелёный темы.
-    val profColor: Color? = profileColorFor(state, shift)
-    val base = when {
-        shift == null -> null
-        shift.isDayOff -> profColor ?: Palette.DayOffGreen
-        else -> profColor ?: Palette.ShiftRed
+    val ordered = MultiShift.ordered(dayShifts)
+    val work = ordered.filter { !it.isDayOff }
+    val dayOff = ordered.any { it.isDayOff }
+    // Цвет дня: свой профиль — его цвета; иначе слот первой смены / зелёный.
+    val profColor: Color? = ordered.firstNotNullOfOrNull { profileColorFor(state, it) }
+    val base: Color? = when {
+        ordered.isEmpty() -> null
+        dayOff -> profColor ?: Palette.DayOffGreen
+        else -> profColor ?: ShiftSlotColors.colorFor(0)
     }
+    val summary = summarizeDay(ordered)
+    // Сколько смен в работе прямо сейчас — только у сегодняшней ячейки.
+    val runningNow = if (isToday) activeShiftsAt(ordered, state.now) else 0
     val bg = base
     Box(
         Modifier
             .padding(1.dp)
             .height(44.dp)
             .clip(RoundedCornerShape(10.dp))
-            .background(if (shift != null) (bg ?: Palette.CardBg).copy(alpha = 0.16f) else Color.Transparent)
+            .background(if (ordered.isNotEmpty()) (bg ?: Palette.CardBg).copy(alpha = 0.16f) else Color.Transparent)
             .border(
                 width = if (isToday) 2.dp else 1.dp,
                 color = when {
                     isToday -> Palette.Ink
-                    shift != null -> (bg ?: Palette.CardBg).copy(alpha = 0.55f)
+                    ordered.isNotEmpty() -> (bg ?: Palette.CardBg).copy(alpha = 0.55f)
                     else -> Palette.Outline.copy(alpha = 0.5f)
                 },
                 shape = RoundedCornerShape(10.dp)
             )
             .clickable(enabled = inSelectedMonth) { onOpen(date) }
-            .semantics { contentDescription = "День ${date.dayOfMonth}" },
+            .semantics {
+                contentDescription = buildString {
+                    append("День ").append(date.dayOfMonth)
+                    if (summary.workCount > 1) append(", смен ").append(summary.workCount)
+                    if (runningNow > 0) append(", сейчас идут ").append(runningNow)
+                    if (dayOff) append(", выходной")
+                }
+            },
         contentAlignment = Alignment.Center
     ) {
         Column(horizontalAlignment = Alignment.CenterHorizontally) {
             Text(
                 "${date.dayOfMonth}",
                 fontSize = 13.sp,
-                fontWeight = if (shift != null || isToday) FontWeight.Bold else FontWeight.Normal,
+                fontWeight = if (ordered.isNotEmpty() || isToday) FontWeight.Bold else FontWeight.Normal,
                 color = Palette.Ink
             )
-            if (shift != null && !shift.isDayOff && shift.startTime != null) {
-                Text(
-                    "${shift.startTime}–${shift.endTime ?: "?"}",
-                    fontSize = 7.sp,
-                    color = Palette.Muted,
-                    maxLines = 1
-                )
-            } else if (shift != null && shift.isDayOff) {
-                Text("вых", fontSize = 7.sp, color = Palette.Muted)
+            when {
+                dayOff && summary.workCount == 0 ->
+                    Text("вых", fontSize = 7.sp, color = Palette.Muted)
+                summary.workCount == 1 && !dayOff -> {
+                    val only = work.first()
+                    if (only.startTime != null) {
+                        Text(
+                            "${only.startTime}–${only.endTime ?: "?"}",
+                            fontSize = 7.sp,
+                            color = Palette.Muted,
+                            maxLines = 1
+                        )
+                    }
+                }
+                summary.workCount > 1 -> {
+                    // Полоски-слоты: цвет = смена, порядок = время начала.
+                    val slotOf = shiftSlots(ordered)
+                    // Идущие сейчас смены подчёркнуты жирной точкой «•».
+                    Row(horizontalArrangement = Arrangement.spacedBy(1.5.dp)) {
+                        work.take(4).forEach { shift ->
+                            Box(
+                                Modifier
+                                    .width(4.dp)
+                                    .height(3.dp)
+                                    .clip(RoundedCornerShape(1.dp))
+                                    .background(ShiftSlotColors.colorFor(slotOf[shift.id] ?: 0))
+                            )
+                        }
+                        if (work.size > 4) {
+                            Text("+", fontSize = 7.sp, color = Palette.Muted)
+                        }
+                    }
+                    Text(
+                        if (runningNow > 0) {
+                            "${summary.workCount} см · идут $runningNow"
+                        } else {
+                            "${summary.workCount} см · ${formatHours(summary.hours)}"
+                        },
+                        fontSize = 6.sp,
+                        color = if (runningNow > 0) Palette.ShiftRed else Palette.Muted,
+                        maxLines = 1
+                    )
+                }
             }
         }
     }
@@ -319,7 +396,9 @@ private fun LegendRow() {
         Modifier.fillMaxWidth().padding(horizontal = 16.dp, vertical = 2.dp),
         horizontalArrangement = Arrangement.spacedBy(12.dp)
     ) {
-        LegendDot(Palette.ShiftRed, "смена")
+        LegendDot(Palette.ShiftRed, "1-я смена")
+        LegendDot(ShiftSlotColors.colorFor(1), "2-я")
+        LegendDot(ShiftSlotColors.colorFor(2), "3-я")
         LegendDot(Palette.DayOffGreen, "выходной")
     }
 }

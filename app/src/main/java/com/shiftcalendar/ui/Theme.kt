@@ -1,6 +1,7 @@
 package com.shiftcalendar.ui
 
 import androidx.compose.foundation.isSystemInDarkTheme
+import androidx.compose.material3.ButtonDefaults
 import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.darkColorScheme
 import androidx.compose.material3.lightColorScheme
@@ -29,7 +30,8 @@ data class AppColors(
     val cardBg: Color,         // карточки
     val outline: Color,        // рамки/разделители
     val weekendTint: Color,
-    val onInk: Color           // текст на «черных» кнопках-акцентах
+    val onInk: Color,          // текст на «черных» кнопках-акцентах
+    val disabledBg: Color = ink.copy(alpha = 0.08f) // фон выключенной кнопки
 ) {
     val isDark: Boolean get() = paper.luminance() < 0.5f
 }
@@ -60,34 +62,80 @@ val DarkColors = AppColors(
 
 val LocalAppColors = staticCompositionLocalOf { LightColors }
 
-/** Материал-схема под нашу палитру: тёмная тема реально перекрашивает всё. */
+/**
+ * Материал-схема под нашу палитру: тёмная тема реально перекрашивает всё.
+ *
+ * Заполняем и «редкие» роли (errorContainer, tertiary, inverseSurface,
+ * surfaceContainer*): если их не задать, material3 подставит свои светлые
+ * значения — отсюда и брались слепящие белые кнопки в тёмной теме.
+ */
 fun appColorScheme(colors: AppColors) = if (colors.isDark) {
     darkColorScheme(
         primary = colors.ink,
         onPrimary = colors.onInk,
+        primaryContainer = colors.weekendTint,
+        onPrimaryContainer = colors.ink,
+        secondary = colors.dayOffGreen,
+        onSecondary = colors.onInk,
+        secondaryContainer = colors.dayOffGreen.copy(alpha = 0.18f),
+        onSecondaryContainer = colors.ink,
+        tertiary = colors.shiftRed,
+        onTertiary = colors.onInk,
         background = colors.paper,
         onBackground = colors.ink,
         surface = colors.cardBg,
         onSurface = colors.ink,
         surfaceVariant = colors.weekendTint,
         onSurfaceVariant = colors.muted,
+        surfaceTint = colors.cardBg,
+        surfaceContainerLowest = colors.paper,
+        surfaceContainerLow = colors.weekendTint,
+        surfaceContainer = colors.cardBg,
+        surfaceContainerHigh = colors.cardBg,
+        surfaceContainerHighest = colors.outline,
+        inverseSurface = colors.ink,
+        inverseOnSurface = colors.paper,
+        inversePrimary = colors.paper,
         outline = colors.outline,
+        outlineVariant = colors.outline,
         error = colors.shiftRed,
-        secondary = colors.dayOffGreen
+        onError = colors.onInk,
+        errorContainer = colors.shiftRed.copy(alpha = 0.18f),
+        onErrorContainer = colors.ink
     )
 } else {
     lightColorScheme(
         primary = colors.ink,
         onPrimary = colors.onInk,
+        primaryContainer = colors.weekendTint,
+        onPrimaryContainer = colors.ink,
+        secondary = colors.dayOffGreen,
+        onSecondary = colors.onInk,
+        secondaryContainer = colors.dayOffGreen.copy(alpha = 0.14f),
+        onSecondaryContainer = colors.ink,
+        tertiary = colors.shiftRed,
+        onTertiary = colors.onInk,
         background = colors.paper,
         onBackground = colors.ink,
         surface = colors.cardBg,
         onSurface = colors.ink,
         surfaceVariant = colors.weekendTint,
         onSurfaceVariant = colors.muted,
+        surfaceTint = colors.cardBg,
+        surfaceContainerLowest = colors.cardBg,
+        surfaceContainerLow = colors.paper,
+        surfaceContainer = colors.cardBg,
+        surfaceContainerHigh = colors.cardBg,
+        surfaceContainerHighest = colors.weekendTint,
+        inverseSurface = colors.ink,
+        inverseOnSurface = colors.paper,
+        inversePrimary = colors.paper,
         outline = colors.outline,
+        outlineVariant = colors.outline,
         error = colors.shiftRed,
-        secondary = colors.dayOffGreen
+        onError = colors.onInk,
+        errorContainer = colors.shiftRed.copy(alpha = 0.12f),
+        onErrorContainer = colors.ink
     )
 }
 
@@ -111,7 +159,30 @@ object Palette {
     val Outline: Color @Composable @ReadOnlyComposable get() = LocalAppColors.current.outline
     val WeekendTint: Color @Composable @ReadOnlyComposable get() = LocalAppColors.current.weekendTint
     val OnInk: Color @Composable @ReadOnlyComposable get() = LocalAppColors.current.onInk
+    val DisabledBg: Color @Composable @ReadOnlyComposable get() = LocalAppColors.current.disabledBg
 }
+
+/**
+ * Цвета залитой кнопки-акцента: включена — Ink на OnInk, выключена — полупрозрачный
+ * Ink с приглушённым OnInk. Без явного disabled*-цвета material3 рисует выключенную
+ * кнопку белым (surfaceVariant светлой схемы) — в тёмной теме это слепило.
+ */
+@Composable
+fun accentButtonColors() = ButtonDefaults.buttonColors(
+    containerColor = Palette.Ink,
+    contentColor = Palette.OnInk,
+    disabledContainerColor = Palette.DisabledBg,
+    disabledContentColor = Palette.Muted.copy(alpha = 0.7f)
+)
+
+/** То же для OutlinedButton: фон карточки вместо белого по умолчанию. */
+@Composable
+fun outlinedButtonColors() = ButtonDefaults.outlinedButtonColors(
+    containerColor = Palette.CardBg,
+    contentColor = Palette.Ink,
+    disabledContainerColor = Palette.DisabledBg,
+    disabledContentColor = Palette.Muted.copy(alpha = 0.7f)
+)
 
 /**
  * Тема приложения: MaterialTheme с нашей схемой плюс CompositionLocal палитры.
@@ -133,11 +204,64 @@ fun ShiftCalendarTheme(
 fun ShiftCalendarTheme(content: @Composable () -> Unit) =
     ShiftCalendarTheme(darkTheme = isSystemInDarkTheme(), content = content)
 
-/** Цвет заливки банки в текущей теме (внутренности «Black Monster» всегда тёмные). */
+/** Цвета заливки банки в текущей теме (внутренности «Black Monster» всегда тёмные). */
 object BankPalette {
     val MonsterGreen: Color get() = Color(0xFF6CC24A)
     val MonsterGreenDark: Color @Composable get() = if (palette().isDark) Color(0xFF9BD873) else Color(0xFF3E8E2A)
     val CanDark: Color get() = Color(0xFF1A1C20)
     val Metal: Color get() = Color(0xFFC9CDD4)
     val Empty: Color @Composable get() = palette().weekendTint
+}
+
+/**
+ * Цвета смен внутри одного дня: первая смена — красный (как раньше у одиночной
+ * смены), вторая — синий, третья — фиолетовый, четвёртая — оранжевый, дальше
+ * по кругу. Выходной в любом слоте — зелёный.
+ *
+ * Цвет — это не украшение, а способ различить независимые смены дня и в сетке,
+ * и в списке редактора; поэтому он не берётся из темы (там один «красный смены»),
+ * но в тёмной теме используются более светлые оттенки, чтобы читаться.
+ */
+object ShiftSlotColors {
+
+    // Цвета заданы ARGB-числами (Long), чтобы их можно было проверить юнит-тестом
+    // без Compose: порядок слотов — часть поведения «смены разного цвета».
+    /** Первая смена дня — красный, как раньше у одиночной смены. */
+    val LIGHT: List<Long> = listOf(
+        0xFFD8433C, // красный
+        0xFF2F6FDB, // синий
+        0xFF8E4EC6, // фиолетовый
+        0xFFD98324, // оранжевый
+        0xFF148F8A  // бирюзовый
+    )
+
+    /** Те же слоты в тёмной теме — светлее, чтобы читались на тёмном фоне. */
+    val DARK: List<Long> = listOf(
+        0xFFE8675F,
+        0xFF6C9BEC,
+        0xFFB47FE8,
+        0xFFE8A559,
+        0xFF4FC7C0
+    )
+
+    /** Сколько слотов задано явно; дальше цвета повторяются по кругу. */
+    val slotCount: Int = LIGHT.size
+
+    /** Выходной — зелёный в любой теме (светлее в тёмной). */
+    const val LIGHT_DAYOFF: Long = 0xFF2E9E5B
+    const val DARK_DAYOFF: Long = 0xFF43B978
+
+    /**
+     * ARGB слота [index] (0 — первая смена дня). Индекс по модулю: шестая смена
+     * дня снова красная. Выходной в любом слоте — зелёный.
+     */
+    fun argb(index: Int, isDayOff: Boolean = false, dark: Boolean = false): Long =
+        if (isDayOff) (if (dark) DARK_DAYOFF else LIGHT_DAYOFF)
+        else (if (dark) DARK else LIGHT)[Math.floorMod(index, slotCount)]
+
+    /** Цвет слота текущей темы. */
+    @Composable
+    @ReadOnlyComposable
+    fun colorFor(index: Int, isDayOff: Boolean = false): Color =
+        Color(argb(index, isDayOff, palette().isDark))
 }

@@ -42,15 +42,141 @@ data class PatternStep(
     /** Оплачиваемые часы: интервал минус перерыв, не меньше нуля. */
     val paidHours: Double
         get() = (effectiveHours - breakMinutes / 60.0).coerceAtLeast(0.0)
+
+    /** Оба конца введены, но начало совпадает с концом — такую смену нельзя записать. */
+    val hasDegenerateInterval: Boolean
+        get() = !isDayOff && isDegenerateInterval(start, end)
+
+    /** Тип смены по факту интервала: переход через полночь — NIGHT. */
+    val resolvedKind: ShiftKind
+        get() = if (isDayOff) kind else kindForInterval(kind, start, end)
+
+    /**
+     * Шаг, приведённый к записываемому виду: времена в «HH:mm», перерыв не
+     * больше длины смены, у выходного нет ни времени, ни перерыва.
+     * Используется при сохранении и при применении паттерна.
+     */
+    fun normalized(): PatternStep {
+        val nStart = normalizeTime(start) ?: (if (isDayOff) null else defaultInterval(kind).first)
+        val nEnd = normalizeTime(end) ?: (if (isDayOff) null else defaultInterval(kind).second)
+        if (isDayOff) return copy(startTime = null, endTime = null, breakMinutes = 0)
+        val len = (intervalHours(nStart, nEnd) ?: 0.0)
+        val cap = Math.round(len * 60.0).toInt()
+        return copy(
+            startTime = nStart,
+            endTime = nEnd,
+            breakMinutes = breakMinutes.coerceIn(0, cap.coerceAtLeast(0))
+        )
+    }
 }
 
 private fun minutesOf(hours: Double): Int = Math.round(hours * 60.0).toInt()
 
-/** Ночная смена — та, что пересекает полночь. */
-private fun PatternStep.isNightSpan(): Boolean {
-    val s = parseTimeOrNull(start) ?: return false
-    val e = parseTimeOrNull(end) ?: return false
-    return !e.isAfter(s)
+/**
+ * Тип смены по интервалу: переход через полночь — ночная.
+ * Равные концы — не «ночь» и не сутки: интервал некорректен, тип остаётся.
+ */
+private fun kindForInterval(kind: ShiftKind, start: String?, end: String?): ShiftKind {
+    val s = parseTimeOrNull(start) ?: return kind
+    val e = parseTimeOrNull(end) ?: return kind
+    if (s == e) return kind
+    return if (e.isBefore(s)) ShiftKind.NIGHT else kind
+}
+
+/** Два шага задают одну и ту же смену — дубль, который можно схлопнуть. */
+private fun PatternStep.sameShape(other: PatternStep): Boolean {
+    if (isDayOff != other.isDayOff) return false
+    if (isDayOff) return true
+    return normalizeTime(start) == normalizeTime(other.start) &&
+        normalizeTime(end) == normalizeTime(other.end) &&
+        rate == other.rate &&
+        breakMinutes == other.breakMinutes
+}
+
+/**
+ * Свести цикл к кратчайшему периоду: «раб/раб/раб/раб/вых/вых» остаётся,
+ * а «раб/вых/раб/вых» не меняется, зато цикл, повторённый дважды подряд,
+ * сокращается до одного периода. Возвращает возможно более короткий цикл,
+ * который даёт ту же последовательность смен (по первой [limitDays] дням,
+ * по умолчанию — два полных прохода цикла).
+ *
+ * Это именно нормализация формы: шаги не теряются и последовательность
+ * не перекашивается — в отличие от простого схлопывания соседей.
+ */
+fun normalizePattern(steps: List<PatternStep>, limitDays: Int = 0): List<PatternStep> {
+    if (steps.isEmpty()) return steps
+    // Соседние одинаковые дни НЕ склеиваем: «раб/раб/вых/вых» — это цикл 2/2,
+    // и склейка превратила бы его в 1/1, перекос��в весь календарь.
+    val merged = steps
+    val n = merged.size
+    val span = if (limitDays > 0) limitDays else n * 2
+    // Сравниваем канонические формы, а не сырые: шаг без явного времени и тот же
+    // шаг с проставленным временем — один и тот же день. Проверяем, что вся
+    // последовательность повторяет первые [period] дней, а не что она содержит
+    // только их: иначе ци��л 4/2 схлопнулся бы до 1/1.
+    for (period in 1 until n) {
+        if (n % period != 0) continue
+        val head = canonicalForms(merged, 0, period)
+        val body = canonicalForms(merged, 0, span)
+        if (body.indices.all { i -> body[i] == head[i % period] }) {
+            val cut = merged.take(period)
+            // Время берём явное, если оно есть хотя бы в одном повторе периода.
+            return cut.mapIndexed { k, s ->
+                val src = (k until n step period).map { merged[it] }
+                s.copy(
+                    startTime = s.startTime ?: src.firstNotNullOfOrNull { it.startTime },
+                    endTime = s.endTime ?: src.firstNotNullOfOrNull { it.endTime },
+                    hours = if (s.hours != DEFAULT_SHIFT_HOURS) s.hours
+                    else src.firstOrNull { it.hours != DEFAULT_SHIFT_HOURS }?.hours ?: s.hours
+                )
+            }
+        }
+    }
+    return merged
+}
+
+/** Сравнимое описание дня цикла: время и ставка приведены к явному виду. */
+private fun PatternStep.canonical(): String =
+    if (isDayOff) "OFF|${kind.name}"
+    else listOf("WORK", kind.name, start, end, rate.toString(), breakMinutes.toString()).joinToString("|")
+
+private fun canonicalForms(steps: List<PatternStep>, from: Int, count: Int): List<String> =
+    (0 until count).map { i -> steps[(from + i) % steps.size].canonical() }
+
+/**
+ * Проверка цикла перед сохранением: какие шаги нельзя записать и что
+ * стоит поправить. Возвращает список проблем на русском — для показа рядом
+ * с конструктором; пустой список значит «цикл годен».
+ */
+fun patternProblems(steps: List<PatternStep>): List<String> {
+    if (steps.isEmpty()) return listOf("Цикл пуст")
+    val problems = ArrayList<String>()
+    steps.forEachIndexed { i, step ->
+        val name = "Шаг ${i + 1}"
+        if (step.isDayOff) {
+            if (step.breakMinutes < 0) problems.add("$name: перерыв не может быть отрицательным")
+            return@forEachIndexed
+        }
+        val s = parseTimeOrNull(step.start)
+        val e = parseTimeOrNull(step.end)
+        if (s == null || e == null) {
+            problems.add("$name: проверьте время (ЧЧ:ММ)")
+            return@forEachIndexed
+        }
+        if (s == e) {
+            problems.add("$name: начало и конец совпадают — смена не может быть нулевой")
+            return@forEachIndexed
+        }
+        if (step.breakMinutes < 0) problems.add("$name: перерыв не может быть отрицательным")
+        val len = intervalHours(normalizeTime(step.start), normalizeTime(step.end)) ?: 0.0
+        if (step.breakMinutes > len * 60) {
+            problems.add("$name: перерыв длиннее смены")
+        }
+    }
+    if (problems.isEmpty() && steps.all { it.isDayOff }) {
+        problems.add("В цикле нет ни одной смены — только выходные")
+    }
+    return problems
 }
 
 /** Готовые шаблоны циклов — чтобы не собирать с нуля. */
@@ -227,8 +353,13 @@ data class PatternApplyResult(
     val dayOffCount: Int,
     val totalHours: Double,
     val totalEarned: Double,
-    val replacedCount: Int
-)
+    val replacedCount: Int,
+    /** Даты диапазона, которые не проставлены из-за невалидного шага цикла. */
+    val skippedDates: List<String> = emptyList()
+) {
+    /** Есть дни, не проставленные из-за невалидного шага. */
+    val hasSkipped: Boolean get() = skippedDates.isNotEmpty()
+}
 
 /**
  * Наложить паттерн (профиль) на диапазон дат.
@@ -236,9 +367,18 @@ data class PatternApplyResult(
  * Правило замены: паттерн НЕ дублирует существующее, а заменяет его. Все
  * смены интервала — чужих профилей и ручные — будут перезаписаны сменами
  * этого паттерна; счётчик [PatternApplyResult.replacedCount] говорит,
- * сколько записей затронуто. Собственные старые смены того же профиля
- * ([profileId] > 0) не считаются дублями: при записи по дате они просто
- * перезаписываются свежими значениями, дублирования не происходит.
+ * сколько ДАТ интервала уже были заняты. Один день — одна смена: повторной
+ * записи на ту же дату не бывает, поэтому дублей паттерн не создаёт.
+ *
+ * Перед наложением цикл нормализуется ([normalizePattern]): повторённый
+ * целиком цикл сжимается до периода, одинаковые соседние дни склеиваются,
+ * а шаги приводятся к записи ([PatternStep.normalized]) — время в «HH:mm»,
+ * перерыв не длиннее смены. Тип смены берётся по интервалу ([PatternStep.resolvedKind]):
+ * шаг через полночь становится NIGHT.
+ *
+ * Невалидные шаги (время не разбирается или начало совпадает с концом)
+ * пропускаются и попадают в [PatternApplyResult.skippedDates], чтобы вместо
+ * выдуманных 24 часов пользователь увидел, какие дни не проставлены.
  *
  * @param start первый день цикла. При [alignToMonth] паттерн «плывёт» так,
  *   чтобы каждый месяц начинался с начала цикла (режим «по календарю»);
@@ -261,51 +401,57 @@ fun buildPatternShifts(
     var replaced = 0
     var first: java.time.LocalDate? = null
     var last: java.time.LocalDate? = null
+    val skipped = ArrayList<String>()
 
-    if (pattern.isEmpty()) {
+    val cycle = normalizePattern(pattern).map { it.normalized() }
+    if (cycle.isEmpty() || to.isBefore(from)) {
         return PatternApplyResult(emptyList(), from, from, 0, 0, 0.0, 0.0, 0)
     }
 
     var day = from
     while (!day.isAfter(to)) {
-        // Индекс шага: либо непрерывно от старта цикла, либо от начала месяца
-        val cycleBase = if (alignToMonth) day.withDayOfMonth(1) else start
         if (day.isBefore(start) && !alignToMonth) {
             day = day.plusDays(1)
             continue
         }
+        // Индекс шага: либо непрерывно от старта цикла, либо от начала месяца
+        val cycleBase = if (alignToMonth) day.withDayOfMonth(1) else start
         val offset = java.time.temporal.ChronoUnit.DAYS.between(cycleBase, day)
-        val idx = ((offset % pattern.size) + pattern.size).toInt() % pattern.size
-        val step = pattern[idx]
+        val idx = ((offset % cycle.size) + cycle.size).toInt() % cycle.size
+        val step = cycle[idx]
+
+        if (step.hasDegenerateInterval ||
+            (!step.isDayOff && (parseTimeOrNull(step.start) == null || parseTimeOrNull(step.end) == null))
+        ) {
+            // День остаётся как есть: лучше пропустить, чем записать фиктивные часы.
+            skipped.add(day.iso())
+            day = day.plusDays(1)
+            continue
+        }
 
         if (existingDates.contains(day.iso())) replaced++
 
-        // Интервал шага — свой у каждого шага цикла; ночная смена красится в NIGHT.
-        val hours = if (step.isDayOff) 0.0 else step.paidHours
-        val kindName = when {
-            step.isDayOff -> step.kind.name
-            step.isNightSpan() -> ShiftKind.NIGHT.name
-            else -> step.kind.name
-        }
+        val worked = !step.isDayOff
+        val hours = if (worked) step.paidHours else 0.0
         out.add(
             Shift(
                 date = day.iso(),
-                kind = kindName,
+                kind = step.resolvedKind.name,
                 hours = hours,
-                startTime = if (step.isDayOff) null else step.start,
-                rate = if (step.isDayOff) 0.0 else step.rate,
-                isDayOff = step.isDayOff,
+                startTime = if (worked) step.start else null,
+                rate = if (worked) step.rate else 0.0,
+                isDayOff = !worked,
                 note = "паттерн",
-                endTime = if (step.isDayOff) null else step.end,
-                breakMinutes = if (step.isDayOff) 0 else step.breakMinutes,
+                endTime = if (worked) step.end else null,
+                breakMinutes = if (worked) step.breakMinutes else 0,
                 profileId = profileId
             )
         )
-        if (step.isDayOff) dayOffCount++ else {
+        if (worked) {
             workCount++
             totalHours += hours
             totalEarned += hours * step.rate
-        }
+        } else dayOffCount++
         if (first == null) first = day
         last = day
         day = day.plusDays(1)
@@ -319,6 +465,7 @@ fun buildPatternShifts(
         dayOffCount = dayOffCount,
         totalHours = totalHours,
         totalEarned = totalEarned,
-        replacedCount = replaced
+        replacedCount = replaced,
+        skippedDates = skipped
     )
 }

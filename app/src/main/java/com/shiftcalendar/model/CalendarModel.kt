@@ -41,14 +41,30 @@ fun normalizeTime(raw: String?): String? =
 
 /**
  * Длительность смены в часах по интервалу. Ночной переход через полночь
- * (20:00–08:00) считается как 12 ч; равные концы — 24 ч (сутки).
+ * (20:00–08:00) считается как 12 ч; равные концы (08:00–08:00) — НЕ сутки,
+ * а некорректный интервал: для смены «на сутки» концы должны быть разными
+ * (00:00–23:59 или 08:00–07:59). Поэтому возвращаем null.
+ *
+ * Прежнее поведение «равные концы = 24 ч» молча превращало опечатку
+ * (начало=конец) в круглосуточную смену, что искажало часы и заработок.
  */
 fun intervalHours(start: String?, end: String?): Double? {
     val s = parseTimeOrNull(start) ?: return null
     val e = parseTimeOrNull(end) ?: return null
+    if (s == e) return null
     var minutes = java.time.Duration.between(s, e).toMinutes()
-    if (minutes <= 0) minutes += 1440
+    if (minutes < 0) minutes += 1440
     return minutes / 60.0
+}
+
+/**
+ * Невалидный интервал: оба конца введены, но начало совпадает с концом.
+ * Используется для подсказки «проверьте время» рядом с полями ввода.
+ */
+fun isDegenerateInterval(start: String?, end: String?): Boolean {
+    val s = parseTimeOrNull(start) ?: return false
+    val e = parseTimeOrNull(end) ?: return false
+    return s == e
 }
 
 /** Интервал, который подходит типу смены — для подстановки по умолчанию. */

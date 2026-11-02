@@ -81,7 +81,7 @@ fun PatternScreen(
                 Button(
                     onClick = onApply,
                     enabled = state.patternSteps.isNotEmpty(),
-                    colors = ButtonDefaults.buttonColors(containerColor = Palette.Ink, contentColor = Palette.OnInk),
+                    colors = accentButtonColors(),
                     shape = RoundedCornerShape(14.dp),
                     modifier = Modifier.fillMaxWidth().height(52.dp)
                 ) {
@@ -172,19 +172,13 @@ fun PatternScreen(
                 Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
                     OutlinedButton(
                         onClick = { onAdd(false) },
-                        colors = ButtonDefaults.outlinedButtonColors(
-                            containerColor = Palette.CardBg,
-                            contentColor = Palette.Ink
-                        ),
+                        colors = outlinedButtonColors(),
                         shape = RoundedCornerShape(10.dp),
                         modifier = Modifier.weight(1f)
                     ) { Text("+ смена", fontSize = 13.sp, color = Palette.Ink) }
                     OutlinedButton(
                         onClick = { onAdd(true) },
-                        colors = ButtonDefaults.outlinedButtonColors(
-                            containerColor = Palette.CardBg,
-                            contentColor = Palette.Ink
-                        ),
+                        colors = outlinedButtonColors(),
                         shape = RoundedCornerShape(10.dp),
                         modifier = Modifier.weight(1f)
                     ) { Text("+ выходной", fontSize = 13.sp, color = Palette.Ink) }
@@ -213,17 +207,11 @@ fun PatternScreen(
             Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
                 OutlinedButton(
             onClick = { showStartPicker = true },
-            colors = ButtonDefaults.outlinedButtonColors(
-                containerColor = Palette.CardBg,
-                contentColor = Palette.Ink
-            )
+            colors = outlinedButtonColors()
         ) { Text("Выбрать дату начала", color = Palette.Ink) }
                 OutlinedButton(
             onClick = { showThresholdPicker = true },
-            colors = ButtonDefaults.outlinedButtonColors(
-                containerColor = Palette.CardBg,
-                contentColor = Palette.Ink
-            )
+            colors = outlinedButtonColors()
         ) { Text("Надбавка с ${state.nightThreshold}", color = Palette.Ink) }
             }
             if (showStartPicker) {
@@ -303,10 +291,7 @@ fun PatternScreen(
             // 5. Предпросмотр
             OutlinedButton(
                 onClick = onPreview,
-                colors = ButtonDefaults.outlinedButtonColors(
-                    containerColor = Palette.CardBg,
-                    contentColor = Palette.Ink
-                ),
+                colors = outlinedButtonColors(),
                 shape = RoundedCornerShape(12.dp),
                 modifier = Modifier.fillMaxWidth().height(46.dp)
             ) { Text("Посчитать, что получится", color = Palette.Ink) }
@@ -416,13 +401,14 @@ private fun ProfileSection(
     Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
         OutlinedButton(
             onClick = onNew,
+            colors = outlinedButtonColors(),
             shape = RoundedCornerShape(10.dp),
             modifier = Modifier.weight(1f)
         ) { Text("＋ новый профиль", fontSize = 13.sp, color = Palette.Ink) }
         Button(
             onClick = onSave,
             enabled = state.patternSteps.isNotEmpty(),
-            colors = ButtonDefaults.buttonColors(containerColor = Palette.Ink, contentColor = Palette.OnInk),
+            colors = accentButtonColors(),
             shape = RoundedCornerShape(10.dp),
             modifier = Modifier.weight(1f)
         ) { Text("Сохранить профиль", fontSize = 13.sp) }
@@ -886,12 +872,18 @@ private fun DateRow(label: String, date: LocalDate, onChange: (LocalDate) -> Uni
     }
 }
 
+/** Счётчик даты: шаг назад/вперёд цветами темы (Ink-заливка, не белая). */
 @Composable
 private fun StepperMini(label: String, onClick: () -> Unit) {
     Box(
-        Modifier.size(30.dp).clip(CircleShape).background(Palette.Ink).clickable(onClick = onClick),
+        Modifier
+            .size(30.dp)
+            .clip(CircleShape)
+            .background(Palette.WeekendTint)
+            .border(1.dp, Palette.Outline, CircleShape)
+            .clickable(onClick = onClick),
         contentAlignment = Alignment.Center
-    ) { Text(label, color = Palette.OnInk, fontSize = 15.sp, fontWeight = FontWeight.Bold) }
+    ) { Text(label, color = Palette.Ink, fontSize = 15.sp, fontWeight = FontWeight.Bold) }
 }
 
 @Composable
@@ -915,7 +907,14 @@ private fun ToggleRow(
         Switch(
             checked = checked,
             onCheckedChange = onChecked,
-            colors = SwitchDefaults.colors(checkedTrackColor = Palette.DayOffGreen)
+            colors = SwitchDefaults.colors(
+                checkedThumbColor = Palette.OnInk,
+                checkedTrackColor = Palette.DayOffGreen,
+                checkedBorderColor = Palette.DayOffGreen,
+                uncheckedThumbColor = Palette.Muted,
+                uncheckedTrackColor = Palette.WeekendTint,
+                uncheckedBorderColor = Palette.Outline
+            )
         )
     }
 }
