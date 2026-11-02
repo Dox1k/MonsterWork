@@ -1,4 +1,4 @@
-package com.shiftcalendar
+package com.shiftcalendar.data
 
 import androidx.room.Dao
 import androidx.room.Database

@@ -176,22 +176,24 @@ private fun MonthStrip(state: UiState, onSelect: (YearMonth) -> Unit) {
                     .border(1.dp, if (isSel) Palette.Ink else Palette.Outline, RoundedCornerShape(12.dp))
                     .clickable { onSelect(ym) }
                     .padding(horizontal = 12.dp, vertical = 8.dp),
-                horizontalAlignment = Alignment.CenterHorizontally
+                contentAlignment = Alignment.Center
             ) {
-                Text(
-                    monthTitleRu(ym),
-                    fontSize = 12.sp,
-                    color = if (isSel) Palette.OnInk else Palette.Ink,
-                    fontWeight = if (isSel) FontWeight.SemiBold else FontWeight.Normal
-                )
-                if (summary != null && summary.hasAny) {
+                Column(horizontalAlignment = Alignment.CenterHorizontally) {
                     Text(
-                        "${summary.shiftCount} см",
-                        fontSize = 9.sp,
-                        color = if (isSel) Palette.OnInk.copy(alpha = 0.8f) else Palette.Muted
+                        monthTitleRu(ym),
+                        fontSize = 12.sp,
+                        color = if (isSel) Palette.OnInk else Palette.Ink,
+                        fontWeight = if (isSel) FontWeight.SemiBold else FontWeight.Normal
                     )
-                } else {
-                    Text("—", fontSize = 9.sp, color = if (isSel) Palette.OnInk.copy(alpha = 0.7f) else Palette.Muted)
+                    if (summary != null && summary.hasAny) {
+                        Text(
+                            "${summary.shiftCount} см",
+                            fontSize = 9.sp,
+                            color = if (isSel) Palette.OnInk.copy(alpha = 0.8f) else Palette.Muted
+                        )
+                    } else {
+                        Text("—", fontSize = 9.sp, color = if (isSel) Palette.OnInk.copy(alpha = 0.7f) else Palette.Muted)
+                    }
                 }
             }
         }

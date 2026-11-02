@@ -104,7 +104,7 @@ class PatternTest {
     }
 
     @Test
-    fun `занятые дни не перетираются при включённой защите`() {
+    fun `паттерн заменяет существующие смены в диапазоне`() {
         val existing = setOf("2026-11-01", "2026-11-02")
         val res = buildPatternShifts(
             pattern = pattern420,
@@ -115,9 +115,11 @@ class PatternTest {
             profileId = 0L,
             existingDates = existing
         )
-        assertEquals(2, res.skippedExisting)
-        assertEquals(4, res.shifts.size)
-        assertTrue(res.shifts.none { it.date == "2026-11-01" })
+        // 2 дня имели смены -> они перезаписаны паттерном (счётчик замен)
+        assertEquals(2, res.replacedCount)
+        // заменяющий паттерн создаёт смены на ВСЕ дни диапазона (6 дней)
+        assertEquals(6, res.shifts.size)
+        assertTrue(res.shifts.any { it.date == "2026-11-01" })
     }
 
     @Test
