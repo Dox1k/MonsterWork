@@ -104,8 +104,9 @@ data class UiState(
     val workColor: Long = PatternProfile.DEFAULT_WORK_COLOR,
     /** Цвет выходных профиля, ARGB. */
     val dayOffColor: Long = PatternProfile.DEFAULT_DAYOFF_COLOR,
-    /** Диалог подтверждения «удалить все смены». */
-    val clearShiftsConfirm: Boolean = false
+    /** Диалог подтверждения удаления. scope: "month" — месяц, "all" — весь календарь. */
+    val clearShiftsConfirm: Boolean = false,
+    val clearScope: String = "month"
 ) {
     val current: MonthSummary?
         get() = months.firstOrNull { it.ym == selected }
@@ -521,28 +522,40 @@ class ShiftViewModel(app: Application) : AndroidViewModel(app) {
         }
     }
 
-    // ----------Удаление всех смен (кнопка под статистикой) ----------
+    // ----------Удаление смен: месяц или весь календарь (решение 10-А/11-А) ----------
 
-    fun requestClearShifts() {
-        _state.value = _state.value.copy(clearShiftsConfirm = true)
+    /** scope: "month" — смены и выходные выбранного месяца, "all" — весь календарь. */
+    fun requestClearShifts(scope: String = "all") {
+        _state.value = _state.value.copy(clearShiftsConfirm = true, clearScope = scope)
     }
 
     fun dismissClearShifts() {
         _state.value = _state.value.copy(clearShiftsConfirm = false)
     }
 
-    /** Убрать все смены: дни становятся «пустыми», как до проставления. */
+    /** Удалить по подтверждению: месяц — границы месяца, «все» — весь диапазон дат. */
     fun confirmClearShifts() {
         viewModelScope.launch {
+            val scope = _state.value.clearScope
+            val from: String
+            val to: String
+            if (scope == "month") {
+                val ym = _state.value.selected
+                from = ym.atDay(1).iso()
+                to = ym.atEndOfMonth().iso()
+            } else {
+                from = "0000-01-01"
+                to = "9999-12-31"
+            }
             // Снять будущие напоминания, пока смены ещё в базе.
-            val all = dao.shiftsBetween("0000-01-01", "9999-12-31")
             val today = LocalDate.now()
-            all.filter { !it.isDayOff && (it.date > today.iso() || it.date == today.iso()) }
+            dao.shiftsBetween(from, to)
+                .filter { !it.isDayOff && it.date >= today.iso() }
                 .forEach { ShiftAlarmScheduler.cancel(appContext, it) }
-            dao.deleteBetween("0000-01-01", "9999-12-31")
+            dao.deleteBetween(from, to)
             _state.value = _state.value.copy(
                 clearShiftsConfirm = false,
-                savedFlash = "Все смены удалены"
+                savedFlash = if (scope == "month") "Смены месяца удалены" else "Все смены удалены"
             )
             refresh()
         }
@@ -641,22 +654,25 @@ class ShiftViewModel(app: Application) : AndroidViewModel(app) {
     }
 
     fun addStep(isDayOff: Boolean) {
-        val base = _state.value.patternSteps.lastOrNull()
+        val steps = _state.value.patternSteps
+        val base = steps.lastOrNull()
         val kind = base?.kind ?: ShiftKind.DAY
         val step = if (isDayOff) {
             PatternStep(isDayOff = true, kind = kind)
         } else {
-            // Новый шаг наследует явный интервал предыдущего (а не вычисленный конец).
-            val start = base?.startTime ?: defaultInterval(kind).first
-            val end = base?.endTime ?: defaultInterval(kind).second
+            // Решение клиента (В14): после выходных новый рабочий шаг должен получить
+            // график последней рабочей смены ДО них («после выходных — как до выходных»).
+            val template = steps.lastOrNull { !it.isDayOff }
+            val start = template?.startTime ?: defaultInterval(kind).first
+            val end = template?.endTime ?: defaultInterval(kind).second
             PatternStep(
                 isDayOff = false,
                 kind = kind,
-                hours = base?.effectiveHours ?: DEFAULT_SHIFT_HOURS,
-                rate = base?.rate ?: 0.0,
+                hours = template?.effectiveHours ?: DEFAULT_SHIFT_HOURS,
+                rate = template?.rate ?: 0.0,
                 startTime = start,
                 endTime = end,
-                breakMinutes = base?.breakMinutes ?: 0
+                breakMinutes = template?.breakMinutes ?: 0
             )
         }
         _state.value = _state.value.copy(patternSteps = _state.value.patternSteps + step, patternPreview = null)

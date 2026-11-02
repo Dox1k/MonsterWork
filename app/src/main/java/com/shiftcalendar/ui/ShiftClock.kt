@@ -8,10 +8,11 @@ import java.time.LocalTime
 
 /**
  * Логика «банок» и прогресса. Здесь только чистые функции без Android/Compose —
- * их покрывают обычные JVM-тесты (BankTest / ClockTest).
+ * их покрывают обычные JVM-тесты (MonsterBanksTest).
  *
- * Правило от пользователя: одна банка за каждый час смены.
- * 12-часовая смена — 12 банок, 2-часовая — 2 банки.
+ * Правило от пользователя (уточнено): одна банка за каждый час смены,
+ * перерыв НЕ считается — из длительности вычитаются минуты перерыва.
+ * 12-часовая смена с обедом 1 час — 11 банок.
  */
 
 /** Начало и конец смены; ночная смена переходит через полночь. */
@@ -37,24 +38,35 @@ fun shiftDurationHours(shift: Shift): Double {
     return java.time.Duration.between(start, end).toMinutes() / 60.0
 }
 
+/** Оплачиваемые часы смены: длительность минус перерыв, не меньше нуля. */
+fun paidHoursOf(shift: Shift): Double =
+    (shiftDurationHours(shift) - shift.breakMinutes / 60.0).coerceAtLeast(0.0)
+
 /**
- * Сколько банок рисуем для смены. Одна банка = один час, поэтому число банок
- * равно длительности смены в целых часах. Получасовые смены округляются вверх,
- * чтобы за любую работу была хотя бы одна банка.
+ * Сколько банок рисуем для смены. Одна банка = один час работы БЕЗ перерыва,
+ * поэтому число банок — длительность минус перерыв, в целых часах вверх.
+ * Полчаса работы дают одну банку: за любую работу видна хотя бы одна.
  */
 fun canCountFor(shift: Shift): Int {
     if (shift.isDayOff) return 0
-    val hours = shiftDurationHours(shift).takeIf { it > 0 } ?: shift.hours
+    val hours = (shiftDurationHours(shift).takeIf { it > 0 } ?: shift.hours) - shift.breakMinutes / 60.0
     if (hours <= 0) return 0
     return kotlin.math.ceil(hours).toInt()
 }
 
-/** Сколько часов смены прошло к моменту [now], 0..duration. */
+/**
+ * Сколько ОПЛАЧИВАЕМЫХ часов прошло к моменту [now]: прошедшее время минус
+ * перерыв (перерыв — в начале смены, как в расчёте надбавки). 0..оплаченная
+ * длительность.
+ */
 fun elapsedHours(shift: Shift, now: LocalDateTime): Double {
     val (start, end) = shiftWindow(shift) ?: return 0.0
-    if (now.isBefore(start)) return 0.0
-    if (!now.isBefore(end)) return java.time.Duration.between(start, end).toMinutes() / 60.0
-    return java.time.Duration.between(start, now).toMinutes() / 60.0
+    val raw = when {
+        now.isBefore(start) -> 0.0
+        !now.isBefore(end) -> java.time.Duration.between(start, end).toMinutes() / 60.0
+        else -> java.time.Duration.between(start, now).toMinutes() / 60.0
+    }
+    return (raw - shift.breakMinutes / 60.0).coerceAtLeast(0.0)
 }
 
 /**

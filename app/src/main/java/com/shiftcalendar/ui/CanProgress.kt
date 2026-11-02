@@ -167,7 +167,7 @@ fun MonsterBanks(shift: Shift?, now: LocalDateTime) {
         Spacer(Modifier.height(8.dp))
         if (shift == null || total == 0) {
             Text(
-                "Банки появятся во время смены: одна банка за час",
+                "Сегодня смены нет",
                 fontSize = 11.sp,
                 color = Palette.Muted
             )

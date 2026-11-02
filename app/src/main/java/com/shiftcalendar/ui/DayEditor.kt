@@ -188,36 +188,44 @@ fun DayEditor(
                     }
 
                     Spacer(Modifier.height(12.dp))
-                    // Перерыв: −5/+5 минут; вычитается из длины смены
+                    // Перерыв (решение В13): чистое поле минут, без кнопок −/+.
                     Row(
                         Modifier
                             .fillMaxWidth()
                             .clip(RoundedCornerShape(10.dp))
                             .background(Palette.CardBg)
                             .border(1.dp, Palette.Outline, RoundedCornerShape(10.dp))
-                            .padding(horizontal = 10.dp, vertical = 6.dp),
+                            .padding(horizontal = 10.dp, vertical = 8.dp),
                         verticalAlignment = Alignment.CenterVertically
                     ) {
                         Column(Modifier.weight(1f)) {
-                            Text("Перерыв", fontSize = 13.sp, color = Palette.Ink, fontWeight = FontWeight.Medium)
+                            Text("Перерыв, мин", fontSize = 13.sp, color = Palette.Ink, fontWeight = FontWeight.Medium)
                             Text(
                                 "вычитается из времени смены",
                                 fontSize = 10.sp, color = Palette.Muted
                             )
                         }
-                        Box(
-                            Modifier.size(30.dp).clip(CircleShape).background(Palette.WeekendTint).clickable { onBreak(state.editingBreakMinutes - 5) },
-                            contentAlignment = Alignment.Center
-                        ) { Text("−", fontSize = 16.sp, color = Palette.Ink, fontWeight = FontWeight.Bold) }
-                        Text(
-                            if (state.editingBreakMinutes > 0) "${state.editingBreakMinutes} мин" else "нет",
-                            fontSize = 13.sp, fontWeight = FontWeight.SemiBold, color = Palette.Ink,
-                            modifier = Modifier.widthIn(min = 62.dp), textAlign = androidx.compose.ui.text.style.TextAlign.Center
+                        OutlinedTextField(
+                            value = if (state.editingBreakMinutes > 0) state.editingBreakMinutes.toString() else "",
+                            onValueChange = { raw ->
+                                val digits = raw.filter { it.isDigit() }.takeLast(3)
+                                onBreak(if (digits.isEmpty()) 0 else digits.toInt().coerceIn(0, 720))
+                            },
+                            placeholder = { Text("0", color = Palette.Muted) },
+                            keyboardOptions = KeyboardOptions(keyboardType = KeyboardType.NumberPassword),
+                            singleLine = true,
+                            textStyle = androidx.compose.ui.text.TextStyle(
+                                fontSize = 16.sp, fontWeight = FontWeight.Bold,
+                                color = Palette.Ink, textAlign = androidx.compose.ui.text.style.TextAlign.Center
+                            ),
+                            colors = OutlinedTextFieldDefaults.colors(
+                                focusedBorderColor = Palette.ShiftRed,
+                                unfocusedBorderColor = Palette.Outline,
+                                focusedTextColor = Palette.Ink,
+                                unfocusedTextColor = Palette.Ink
+                            ),
+                            modifier = Modifier.width(96.dp)
                         )
-                        Box(
-                            Modifier.size(30.dp).clip(CircleShape).background(Palette.WeekendTint).clickable { onBreak(state.editingBreakMinutes + 5) },
-                            contentAlignment = Alignment.Center
-                        ) { Text("+", fontSize = 16.sp, color = Palette.Ink, fontWeight = FontWeight.Bold) }
                     }
 
                     Spacer(Modifier.height(8.dp))
@@ -452,7 +460,12 @@ private fun dayTitle(date: LocalDate): String {
     return "${date.dayOfMonth} $m · $d"
 }
 
-/** Поле времени с −/+ 30 мин и диалогом-часами. */
+/**
+ * Поле времени (решение клиента В12): квадрат [ЧЧ], некликабельное «:»,
+ * квадрат [ММ]. Часы и минуты — два независимых цифровых поля; после ввода
+ * двух цифр часов фокус сам переходит на минуты. Кнопки −/+ убраны совсем,
+ * диалог-часики «⏱» оставлен справа.
+ */
 @Composable
 private fun TimeField(
     label: String,
@@ -464,47 +477,94 @@ private fun TimeField(
 ) {
     val context = LocalContext.current
     val parsed = parseTimeOrNull(value)
+    // Разделяем «HH:mm» на две части; пустые части — пустой ввод.
+    val hh = value.take(2).filter { it.isDigit() }
+    val mm = value.drop(3).take(2).filter { it.isDigit() }
+    // Промежуточные состояния не считаем ошибкой: ругаемся только на оба заполненных, но кривых.
+    val invalid = parsed == null && (hh.length == 2 && mm.length == 2)
+
+    fun clampPart(raw: String, max: Int): String {
+        var digits = raw.filter { it.isDigit() }
+        // Поле можно дописывать без стирания: при переполнении берём последние 2 цифры.
+        if (digits.length > 2) digits = digits.takeLast(2)
+        return when {
+            digits.length == 2 -> digits.toInt().coerceIn(0, max).toString().padStart(2, '0')
+            else -> digits
+        }
+    }
+
+    fun compose(h: String, m: String): String =
+        if (h.isEmpty() && m.isEmpty()) "" else "%s:%s".format(h.padStart(2, '0'), m.padStart(2, '0'))
+
     Column(modifier) {
-        Text(label.uppercase(), fontSize = 10.sp, color = Palette.Muted, fontWeight = FontWeight.SemiBold)
+        Row(verticalAlignment = Alignment.CenterVertically) {
+            Text(label.uppercase(), fontSize = 10.sp, color = Palette.Muted, fontWeight = FontWeight.SemiBold, modifier = Modifier.weight(1f))
+            Text(
+                "⏱", fontSize = 15.sp, color = Palette.Muted,
+                modifier = Modifier
+                    .clip(CircleShape)
+                    .clickable {
+                        TimePickerDialog(
+                            context,
+                            { _, h, m -> onPick("%02d:%02d".format(h, m)) },
+                            parsed?.hour ?: 8, parsed?.minute ?: 0, true
+                        ).show()
+                    }
+                    .padding(6.dp)
+            )
+        }
         Spacer(Modifier.height(4.dp))
-        OutlinedTextField(
-            value = value,
-            onValueChange = onChange,
-            placeholder = { Text("ЧЧ:ММ", color = Palette.Muted) },
-            isError = parsed == null,
-            keyboardOptions = KeyboardOptions(keyboardType = KeyboardType.NumberPassword),
-            singleLine = true,
-            textStyle = androidx.compose.ui.text.TextStyle(
-                fontSize = 17.sp, fontWeight = FontWeight.Bold, color = Palette.Ink
-            ),
-            trailingIcon = {
-                Text(
-                    "⏱", fontSize = 15.sp, color = Palette.Muted,
-                    modifier = Modifier
-                        .clip(CircleShape)
-                        .clickable {
-                            TimePickerDialog(
-                                context,
-                                { _, h, m -> onPick("%02d:%02d".format(h, m)) },
-                                parsed?.hour ?: 8, parsed?.minute ?: 0, true
-                            ).show()
-                        }
-                        .padding(6.dp)
-                )
-            },
-            colors = OutlinedTextFieldDefaults.colors(
-                focusedBorderColor = Palette.ShiftRed,
-                unfocusedBorderColor = Palette.Outline,
-                errorBorderColor = Palette.ShiftRed,
-                focusedTextColor = Palette.Ink,
-                unfocusedTextColor = Palette.Ink
-            ),
-            modifier = Modifier.fillMaxWidth()
-        )
-        Spacer(Modifier.height(4.dp))
-        Row(horizontalArrangement = Arrangement.spacedBy(6.dp)) {
-            NudgeButton("−30", Modifier.weight(1f)) { onNudge(-30) }
-            NudgeButton("+30", Modifier.weight(1f)) { onNudge(30) }
+        Row(verticalAlignment = Alignment.CenterVertically) {
+            // ЧЧ
+            OutlinedTextField(
+                value = hh,
+                onValueChange = { raw -> onChange(compose(clampPart(raw, 23), mm)) },
+                placeholder = { Text("ЧЧ", color = Palette.Muted, fontSize = 15.sp) },
+                isError = invalid,
+                keyboardOptions = KeyboardOptions(keyboardType = KeyboardType.NumberPassword),
+                singleLine = true,
+                textStyle = androidx.compose.ui.text.TextStyle(
+                    fontSize = 17.sp, fontWeight = FontWeight.Bold,
+                    color = Palette.Ink, textAlign = androidx.compose.ui.text.style.TextAlign.Center
+                ),
+                colors = OutlinedTextFieldDefaults.colors(
+                    focusedBorderColor = Palette.ShiftRed,
+                    unfocusedBorderColor = Palette.Outline,
+                    errorBorderColor = Palette.ShiftRed,
+                    focusedTextColor = Palette.Ink,
+                    unfocusedTextColor = Palette.Ink
+                ),
+                modifier = Modifier.weight(1f)
+            )
+            // Некликабельное двоеточие — просто текст между квадратами.
+            Text(
+                ":",
+                fontSize = 19.sp,
+                fontWeight = FontWeight.Bold,
+                color = Palette.Muted,
+                modifier = Modifier.padding(horizontal = 6.dp)
+            )
+            // ММ
+            OutlinedTextField(
+                value = mm,
+                onValueChange = { raw -> onChange(compose(hh, clampPart(raw, 59))) },
+                placeholder = { Text("ММ", color = Palette.Muted, fontSize = 15.sp) },
+                isError = invalid,
+                keyboardOptions = KeyboardOptions(keyboardType = KeyboardType.NumberPassword),
+                singleLine = true,
+                textStyle = androidx.compose.ui.text.TextStyle(
+                    fontSize = 17.sp, fontWeight = FontWeight.Bold,
+                    color = Palette.Ink, textAlign = androidx.compose.ui.text.style.TextAlign.Center
+                ),
+                colors = OutlinedTextFieldDefaults.colors(
+                    focusedBorderColor = Palette.ShiftRed,
+                    unfocusedBorderColor = Palette.Outline,
+                    errorBorderColor = Palette.ShiftRed,
+                    focusedTextColor = Palette.Ink,
+                    unfocusedTextColor = Palette.Ink
+                ),
+                modifier = Modifier.weight(1f)
+            )
         }
     }
 }

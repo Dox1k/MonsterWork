@@ -52,7 +52,8 @@ fun MonthScreen(
     onNextMonth: () -> Unit,
     onPrevYear: () -> Unit,
     onNextYear: () -> Unit,
-    onClearShifts: () -> Unit,
+    /** Запрос удаления: scope = месяц выбранного месяца или весь календарь. */
+    onClearShifts: (String) -> Unit,
     onClearShiftsConfirm: () -> Unit,
     onClearShiftsDismiss: () -> Unit
 ) {
@@ -65,8 +66,22 @@ fun MonthScreen(
                 .fillMaxSize()
                 .verticalScroll(rememberScrollState())
         ) {
+            // Живая карточка «ИДЁТ СМЕНА» — между лентой месяцев и сеткой, как в 7f52463.
+            currentShift(state.months, state.now)?.let { running ->
+                BankProgressCard(
+                    shift = running,
+                    now = state.now,
+                    threshold = runCatching { java.time.LocalTime.parse(state.nightThreshold) }.getOrDefault(java.time.LocalTime.of(22, 0)),
+                    nightEnd = runCatching { java.time.LocalTime.parse(state.nightEnd) }.getOrDefault(java.time.LocalTime.of(6, 0)),
+                    percent = state.nightPremiumPercent,
+                    onOpen = { runCatching { LocalDate.parse(running.date, ISO) }.getOrNull()?.let(onOpenDay) }
+                )
+            }
             CalendarGrid(state, onOpenDay, onPrevMonth, onNextMonth)
-            LegendRow()
+            // Банки текущей смены: 1 банка = час без перерыва. Показывается всегда (5-Б):
+            // нет смены — пустой блок с подсказкой.
+            MonsterBanks(shift = currentShift(state.months, state.now), now = state.now)
+            LegendRow(state)
             // Статистика за выбранный месяц
             state.current?.let { cur ->
                 TotalsCard(
@@ -83,25 +98,38 @@ fun MonthScreen(
                 )
             }
             Spacer(Modifier.height(10.dp))
-            // «Удалить смены» — в самом низу, под статистикой
-            ClearShiftsButton(
-                visible = state.current?.hasAny == true,
-                onClick = onClearShifts
-            )
+            // Две кнопки удаления (решение клиента 10-А): месяц отдельно, весь календарь отдельно.
+            Row(Modifier.fillMaxWidth().padding(horizontal = 16.dp), horizontalArrangement = Arrangement.spacedBy(8.dp)) {
+                ClearShiftsButton(
+                    modifier = Modifier.weight(1f),
+                    visible = state.current?.hasAny == true,
+                    label = "Удалить смены месяца",
+                    onClick = { onClearShifts("month") }
+                )
+                ClearAllShiftsButton(
+                    modifier = Modifier.weight(1f),
+                    visible = state.current?.hasAny == true,
+                    onClick = { onClearShifts("all") }
+                )
+            }
             Spacer(Modifier.height(90.dp))
         }
     }
 
     if (state.clearShiftsConfirm) {
+        val confirmScope = state.clearScope
         AlertDialog(
             onDismissRequest = onClearShiftsDismiss,
             containerColor = Palette.CardBg,
             titleContentColor = Palette.Ink,
             textContentColor = Palette.Ink,
-            title = { Text("Удалить все смены?", fontWeight = FontWeight.Bold, color = Palette.Ink) },
+            title = { Text(if (confirmScope == "month") "Удалить смены месяца?" else "Удалить ВСЕ смены?", fontWeight = FontWeight.Bold, color = Palette.Ink) },
             text = {
                 Text(
-                    "Календарь станет пустым: дни вернутся в состояние «ничего не проставлено». Действие необратимо.",
+                    if (confirmScope == "month")
+                        "Будут удалены все смены и выходные за выбранный месяц. Действие необратимо."
+                    else
+                        "Календарь станет пустым: дни вернутся в состояние «ничего не проставлено». Действие необратимо.",
                     fontSize = 13.sp, color = Palette.Ink
                 )
             },
@@ -269,7 +297,7 @@ private fun CalendarGrid(state: UiState, onOpenDay: (LocalDate) -> Unit, onPrevM
                                 onOpen = onOpenDay
                             )
                         } else {
-                            Spacer(Modifier.height(44.dp))
+                            Spacer(Modifier.padding(1.dp).aspectRatio(1f))
                         }
                     }
                 }
@@ -309,20 +337,23 @@ private fun DayCell(
     // Сколько смен в работе прямо сейчас — только у сегодняшней ячейки.
     val runningNow = if (isToday) activeShiftsAt(ordered, state.now) else 0
     val bg = base
+    // Решение клиента (6-А): квадрат одного размера, меняется только цвет.
+    // Сплошная заливка цветом смены/выходного, как в прошлой версии; число — белое.
     Box(
         Modifier
             .padding(1.dp)
-            .height(44.dp)
-            .clip(RoundedCornerShape(10.dp))
-            .background(if (ordered.isNotEmpty()) (bg ?: Palette.CardBg).copy(alpha = 0.16f) else Color.Transparent)
+            .aspectRatio(1f)
+            .clip(RoundedCornerShape(8.dp))
+            .background(
+                when {
+                    ordered.isEmpty() -> Palette.WeekendTint
+                    else -> bg ?: Palette.CardBg
+                }
+            )
             .border(
-                width = if (isToday) 2.dp else 1.dp,
-                color = when {
-                    isToday -> Palette.Ink
-                    ordered.isNotEmpty() -> (bg ?: Palette.CardBg).copy(alpha = 0.55f)
-                    else -> Palette.Outline.copy(alpha = 0.5f)
-                },
-                shape = RoundedCornerShape(10.dp)
+                width = if (isToday) 2.dp else 0.dp,
+                color = if (isToday) Palette.Ink else Color.Transparent,
+                shape = RoundedCornerShape(8.dp)
             )
             .clickable(enabled = inSelectedMonth) { onOpen(date) }
             .semantics {
@@ -336,30 +367,30 @@ private fun DayCell(
         contentAlignment = Alignment.Center
     ) {
         Column(horizontalAlignment = Alignment.CenterHorizontally) {
+            // Число: белое на залитом квадрате, черное — на пустом.
+            val filled = ordered.isNotEmpty()
             Text(
                 "${date.dayOfMonth}",
                 fontSize = 13.sp,
-                fontWeight = if (ordered.isNotEmpty() || isToday) FontWeight.Bold else FontWeight.Normal,
-                color = Palette.Ink
+                fontWeight = if (filled || isToday) FontWeight.Bold else FontWeight.Normal,
+                color = if (filled) Color.White else Palette.Ink
             )
             when {
                 dayOff && summary.workCount == 0 ->
-                    Text("вых", fontSize = 7.sp, color = Palette.Muted)
+                    Text("вых", fontSize = 7.sp, color = Color.White.copy(alpha = 0.9f))
                 summary.workCount == 1 && !dayOff -> {
                     val only = work.first()
                     if (only.startTime != null) {
                         Text(
-                            "${only.startTime}–${only.endTime ?: "?"}",
+                            "${only.startTime}–${only.endTime ?: "??"}",
                             fontSize = 7.sp,
-                            color = Palette.Muted,
+                            color = Color.White.copy(alpha = 0.9f),
                             maxLines = 1
                         )
                     }
                 }
                 summary.workCount > 1 -> {
-                    // Полоски-слоты: цвет = смена, порядок = время начала.
-                    val slotOf = shiftSlots(ordered)
-                    // Идущие сейчас смены подчёркнуты жирной точкой «•».
+                    // Полоски-слоты: дизайн «точечек» (9-А). На залитом фоне — белые.
                     Row(horizontalArrangement = Arrangement.spacedBy(1.5.dp)) {
                         work.take(4).forEach { shift ->
                             Box(
@@ -367,11 +398,11 @@ private fun DayCell(
                                     .width(4.dp)
                                     .height(3.dp)
                                     .clip(RoundedCornerShape(1.dp))
-                                    .background(ShiftSlotColors.colorFor(slotOf[shift.id] ?: 0))
+                                    .background(Color.White)
                             )
                         }
                         if (work.size > 4) {
-                            Text("+", fontSize = 7.sp, color = Palette.Muted)
+                            Text("+", fontSize = 7.sp, color = Color.White.copy(alpha = 0.9f))
                         }
                     }
                     Text(
@@ -381,7 +412,7 @@ private fun DayCell(
                             "${summary.workCount} см · ${formatHours(summary.hours)}"
                         },
                         fontSize = 6.sp,
-                        color = if (runningNow > 0) Palette.ShiftRed else Palette.Muted,
+                        color = Color.White.copy(alpha = 0.95f),
                         maxLines = 1
                     )
                 }
@@ -390,16 +421,33 @@ private fun DayCell(
     }
 }
 
+/**
+ * Легенда-пояснение цветов. Показывается только если в выбранном месяце
+ * реально есть смены (7-А): нет смен — пояснения нет вообще.
+ * Точки — цвета слотов смен; зелёный «выходной» — только при наличии выходных (8-А).
+ */
 @Composable
-private fun LegendRow() {
+private fun LegendRow(state: UiState) {
+    val summary = state.current
+    if (summary == null || !summary.hasAny) return
+    val shifts = summary.shifts
+    val hasDayOff = shifts.any { it.isDayOff }
+    val workCount = shifts.count { !it.isDayOff }
+    if (workCount == 0 && !hasDayOff) return
     Row(
         Modifier.fillMaxWidth().padding(horizontal = 16.dp, vertical = 2.dp),
         horizontalArrangement = Arrangement.spacedBy(12.dp)
     ) {
-        LegendDot(Palette.ShiftRed, "1-я смена")
-        LegendDot(ShiftSlotColors.colorFor(1), "2-я")
-        LegendDot(ShiftSlotColors.colorFor(2), "3-я")
-        LegendDot(Palette.DayOffGreen, "выходной")
+        if (workCount > 0) LegendDot(Palette.ShiftRed, "смена")
+        // Вторая/третья смена показываются только если в месяце бывали дни с 2+ сменами (9-А).
+        val hasMulti = MultiShift.byDate(shifts).values.any { MultiShift.workCount(it) > 1 }
+        if (hasMulti) {
+            LegendDot(ShiftSlotColors.colorFor(1), "2-я смена")
+            if (MultiShift.byDate(shifts).values.any { MultiShift.workCount(it) > 2 }) {
+                LegendDot(ShiftSlotColors.colorFor(2), "3-я смена")
+            }
+        }
+        if (hasDayOff) LegendDot(Palette.DayOffGreen, "выходной")
     }
 }
 
@@ -464,12 +512,15 @@ private fun TotalsCard(
 }
 
 @Composable
-private fun ClearShiftsButton(visible: Boolean, onClick: () -> Unit) {
+private fun ClearShiftsButton(
+    modifier: Modifier = Modifier,
+    visible: Boolean,
+    label: String,
+    onClick: () -> Unit
+) {
     if (!visible) return
     Box(
-        Modifier
-            .padding(horizontal = 16.dp)
-            .fillMaxWidth()
+        modifier
             .height(46.dp)
             .clip(RoundedCornerShape(12.dp))
             .background(Palette.ShiftRed.copy(alpha = 0.10f))
@@ -478,10 +529,40 @@ private fun ClearShiftsButton(visible: Boolean, onClick: () -> Unit) {
         contentAlignment = Alignment.Center
     ) {
         Text(
-            "Удалить смены месяца",
-            fontSize = 13.sp,
+            label,
+            fontSize = 12.sp,
             fontWeight = FontWeight.SemiBold,
-            color = Palette.ShiftRed
+            color = Palette.ShiftRed,
+            textAlign = TextAlign.Center,
+            maxLines = 2
+        )
+    }
+}
+
+/** Кнопка «Удалить все смены» — нейтральная, чтобы не путалась с красной «месяц». */
+@Composable
+private fun ClearAllShiftsButton(
+    modifier: Modifier = Modifier,
+    visible: Boolean,
+    onClick: () -> Unit
+) {
+    if (!visible) return
+    Box(
+        modifier
+            .height(46.dp)
+            .clip(RoundedCornerShape(12.dp))
+            .background(Palette.CardBg)
+            .border(1.dp, Palette.Outline, RoundedCornerShape(12.dp))
+            .clickable(onClick = onClick),
+        contentAlignment = Alignment.Center
+    ) {
+        Text(
+            "Удалить все смены",
+            fontSize = 12.sp,
+            fontWeight = FontWeight.SemiBold,
+            color = Palette.Ink,
+            textAlign = TextAlign.Center,
+            maxLines = 2
         )
     }
 }
