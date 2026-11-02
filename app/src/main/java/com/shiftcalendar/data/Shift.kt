@@ -1,4 +1,4 @@
-package com.shiftcalendar.data
+package com.shiftcalendar
 
 import androidx.room.Dao
 import androidx.room.Database
@@ -30,7 +30,11 @@ data class Shift(
     val isDayOff: Boolean = false,
     val note: String = "",
     val endTime: String? = null,
-    val completed: Boolean = false
+    val completed: Boolean = false,
+    /** Перерыв в минутах — вычитается из длительности смены. */
+    val breakMinutes: Int = 0,
+    /** Профиль паттерна, проставивший смену (0 — ручная смена). */
+    val profileId: Long = 0
 )
 
 @Dao
@@ -61,9 +65,36 @@ interface ShiftDao {
 
     @Query("SELECT date FROM shifts WHERE date >= :from AND date <= :to")
     suspend fun datesBetween(from: String, to: String): List<String>
+
+    /** Все смены интервала (включительно) — для замены паттерном. */
+    @Query("SELECT * FROM shifts WHERE date >= :from AND date <= :to")
+    suspend fun shiftsBetween(from: String, to: String): List<Shift>
+
+    /** Смены одного профиля в интервале — для самозамены профиля. */
+    @Query("SELECT * FROM shifts WHERE date >= :from AND date <= :to AND profileId = :profileId")
+    suspend fun shiftsBetweenOfProfile(from: String, to: String, profileId: Long): List<Shift>
+
+    /** Удалить смены одного профиля в интервале — самозамена профиля. */
+    @Query("DELETE FROM shifts WHERE date >= :from AND date <= :to AND profileId = :profileId")
+    suspend fun deleteBetweenOfProfile(from: String, to: String, profileId: Long)
+
+    /** Массовое удаление смен в интервале — «удалить смены» на главном экране. */
+    @Query("DELETE FROM shifts WHERE date >= :from AND date <= :to")
+    suspend fun deleteBetween(from: String, to: String)
+
+    /** Обнулить статус выхода/работы: день остаётся, пометка «не выбрано». */
+    @Query("UPDATE shifts SET isDayOff = 0, hours = 0, startTime = NULL, endTime = NULL, rate = 0, breakMinutes = 0 WHERE date >= :from AND date <= :to")
+    suspend fun resetBetween(from: String, to: String)
+
+    /** Смены, проставленные конкретным профилем (весь календарь). */
+    @Query("SELECT * FROM shifts WHERE profileId = :profileId")
+    suspend fun byProfile(profileId: Long): List<Shift>
+
+    @Query("DELETE FROM shifts WHERE profileId = :profileId")
+    suspend fun deleteByProfile(profileId: Long)
 }
 
-@Database(entities = [Shift::class], version = 2, exportSchema = false)
+@Database(entities = [Shift::class], version = 3, exportSchema = false)
 abstract class AppDb : RoomDatabase() {
     abstract fun shifts(): ShiftDao
 }

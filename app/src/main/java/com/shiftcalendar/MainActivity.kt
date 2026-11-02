@@ -10,30 +10,27 @@ import androidx.activity.result.contract.ActivityResultContracts
 import androidx.compose.foundation.background
 import androidx.compose.foundation.clickable
 import androidx.compose.foundation.layout.*
-import androidx.compose.foundation.rememberScrollState
 import androidx.compose.foundation.shape.RoundedCornerShape
-import androidx.compose.foundation.verticalScroll
-import androidx.compose.material3.MaterialTheme
+import androidx.compose.material3.ButtonDefaults
 import androidx.compose.material3.Scaffold
 import androidx.compose.material3.SnackbarHost
 import androidx.compose.material3.SnackbarHostState
 import androidx.compose.material3.Text
 import androidx.compose.material3.TextButton
-import androidx.compose.material3.lightColorScheme
-import androidx.compose.material3.darkColorScheme
 import androidx.compose.runtime.*
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.clip
-import androidx.compose.ui.graphics.Color
+import androidx.compose.ui.semantics.contentDescription
+import androidx.compose.ui.semantics.semantics
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
 import androidx.lifecycle.viewmodel.compose.viewModel
-import com.shiftcalendar.model.monthTitle
+import com.shiftcalendar.model.ISO
 import com.shiftcalendar.ui.*
 import java.time.LocalDate
-import java.time.LocalDateTime
+import java.time.LocalTime
 import java.time.YearMonth
 
 class MainActivity : ComponentActivity() {
@@ -49,17 +46,11 @@ class MainActivity : ComponentActivity() {
             requestNotifications.launch(Manifest.permission.POST_NOTIFICATIONS)
         }
         setContent {
-            val themeVm: ShiftViewModel = viewModel()
-            val themeState by themeVm.state.collectAsState()
-            MaterialTheme(
-                colorScheme = if (themeState.darkTheme) darkColorScheme() else lightColorScheme(
-                    background = Palette.Paper,
-                    surface = Palette.Paper,
-                    onBackground = Palette.Ink,
-                    onSurface = Palette.Ink
-                )
-            ) {
-                AppRoot()
+            // Одна вьюмодель на всё приложение: тема и календарь берут одно состояние.
+            val vm: ShiftViewModel = viewModel()
+            val ui by vm.state.collectAsState()
+            ShiftCalendarTheme(darkTheme = ui.darkTheme) {
+                AppRoot(vm)
             }
         }
     }
@@ -79,54 +70,31 @@ fun AppRoot(vm: ShiftViewModel = viewModel()) {
 
     Scaffold(
         snackbarHost = { SnackbarHost(snackbar) },
-        containerColor = Palette.Paper
+        containerColor = Palette.Paper,
+        contentColor = Palette.Ink
     ) { padding ->
         Column(
             Modifier
                 .fillMaxSize()
                 .padding(padding)
-                .verticalScroll(rememberScrollState())
         ) {
-            Spacer(Modifier.height(12.dp))
+            Spacer(Modifier.height(8.dp))
             Header(onOpenPattern = vm::openPattern, darkTheme = state.darkTheme, onToggleTheme = vm::toggleTheme)
-            Spacer(Modifier.height(4.dp))
-            MonthStrip(
-                months = state.months,
-                selected = state.selected,
-                year = state.year,
-                onSelect = vm::selectMonth,
-                onPrevYear = vm::previousYear,
-                onNextYear = vm::nextYear
-            )
-            Spacer(Modifier.height(16.dp))
 
-            val byDate = remember(state.current) {
-                state.current?.shifts?.associateBy { it.date } ?: emptyMap()
-            }
-            // Банка-прогресс: показывается, если смена идёт прямо сейчас.
-            val now = LocalDateTime.now()
-            val running = remember(state.months, now) { currentShift(state.months, now) }
-            if (running != null) {
-                BankProgressCard(
-                    shift = running,
-                    now = now,
-                    onOpen = { vm.openDay(LocalDate.parse(running.date, com.shiftcalendar.model.ISO)) }
-                )
-            }
-            MonthGrid(
-                ym = state.selected,
-                byDate = byDate,
-                today = state.today,
-                onDayClick = vm::openDay
+            // Основной экран месяца: сетка, легенда, статистика и кнопка удаления —
+            // всё в одном месте (CalendarScreen.MonthScreen).
+            MonthScreen(
+                state = state,
+                onSelectMonth = vm::selectMonth,
+                onOpenDay = vm::openDay,
+                onPrevMonth = vm::previousMonth,
+                onNextMonth = vm::nextMonth,
+                onPrevYear = vm::previousYear,
+                onNextYear = vm::nextYear,
+                onClearShifts = vm::requestClearShifts,
+                onClearShiftsConfirm = vm::confirmClearShifts,
+                onClearShiftsDismiss = vm::dismissClearShifts
             )
-            Spacer(Modifier.height(10.dp))
-            MonsterBanks(shift = running, now = now)
-            Spacer(Modifier.height(10.dp))
-            Legend()
-            Spacer(Modifier.height(6.dp))
-            ShiftList(state.current, onClick = vm::openDay)
-            MonthTotals(state.current, onScrollToToday = {}, threshold = java.time.LocalTime.parse(state.nightThreshold), percent = state.nightPremiumPercent)
-            Spacer(Modifier.height(32.dp))
         }
     }
 
@@ -138,31 +106,47 @@ fun AppRoot(vm: ShiftViewModel = viewModel()) {
             onAdd = vm::addStep,
             onRemove = vm::removeStep,
             onUpdate = vm::updateStep,
+            onStepStart = vm::setStepStart,
+            onStepEnd = vm::setStepEnd,
+            onNudgeStepStart = vm::nudgeStepStart,
+            onNudgeStepEnd = vm::nudgeStepEnd,
+            onStepBreak = vm::setStepBreak,
             onAllRates = vm::setAllRates,
             onStart = vm::setPatternStart,
             onThreshold = vm::setNightThreshold,
+            onNightEnd = vm::setNightEnd,
             onPercent = vm::setNightPercent,
             onUntil = vm::setPatternUntil,
             onAlign = vm::setAlignToMonth,
-            onKeep = vm::setKeepExisting,
             onPreview = vm::previewPattern,
-            onApply = vm::applyPattern
+            onApply = vm::applyPattern,
+            onSelectProfile = vm::loadProfile,
+            onNewProfile = vm::newProfile,
+            onSaveProfile = vm::saveProfile,
+            onDeleteProfile = vm::deleteProfile,
+            onProfileName = vm::setProfileName,
+            onWorkColor = vm::setWorkColor,
+            onDayOffColor = vm::setDayOffColor
         )
     }
 
     if (state.editingDate != null) {
         DayEditor(
             state = state,
-            onKind = vm::setKind,
             onDayOff = vm::setDayOff,
-            onStepHours = vm::stepHours,
             onRate = vm::setRate,
             onNote = vm::setNote,
-            onInterval = vm::setInterval,
-            onComplete = { state.editingShift?.let(vm::completeShift) },
+            onKind = vm::setKind,
+            onStartText = { s -> vm.setInterval(s, state.editingEndTime) },
+            onEndText = { e -> vm.setInterval(state.editingStartTime, e) },
+            onPickStart = vm::pickStart,
+            onPickEnd = vm::pickEnd,
+            onNudgeStart = vm::nudgeStart,
+            onNudgeEnd = vm::nudgeEnd,
+            onBreak = vm::setBreakMinutes,
             onSave = vm::save,
             onDelete = vm::deleteCurrent,
-            onDismiss = vm::closeEditor
+            onClose = vm::closeEditor
         )
     }
 }
@@ -181,7 +165,15 @@ private fun Header(onOpenPattern: () -> Unit, darkTheme: Boolean, onToggleTheme:
                 color = Palette.Ink
             )
         }
-        TextButton(onClick = onToggleTheme) { Text(if (darkTheme) "☀" else "☾", color = Palette.Ink) }
+        TextButton(
+            onClick = onToggleTheme,
+            colors = ButtonDefaults.textButtonColors(contentColor = Palette.Ink),
+            modifier = Modifier.semantics {
+                contentDescription = if (darkTheme) "Включить светлую тему" else "Включить тёмную тему"
+            }
+        ) {
+            Text(if (darkTheme) "☀" else "☾", color = Palette.Ink, fontSize = 20.sp)
+        }
         Box(
             Modifier
                 .clip(RoundedCornerShape(12.dp))
@@ -189,7 +181,7 @@ private fun Header(onOpenPattern: () -> Unit, darkTheme: Boolean, onToggleTheme:
                 .clickable(onClick = onOpenPattern)
                 .padding(horizontal = 14.dp, vertical = 10.dp)
         ) {
-            Text("Паттерн", color = Color.White, fontSize = 13.sp, fontWeight = FontWeight.SemiBold)
+            Text("Паттерн", color = Palette.OnInk, fontSize = 13.sp, fontWeight = FontWeight.SemiBold)
         }
     }
 }

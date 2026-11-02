@@ -20,6 +20,50 @@ const val NIGHT_START = "20:00"
 const val NIGHT_END = "08:00"
 const val DEFAULT_SHIFT_HOURS = 12.0
 
+/**
+ * Разбор «HH:mm» в LocalTime без исключений: nullptr для мусора.
+ * Пробел-разделитель и «8:5» тоже принимаются — ввод с клавиатуры.
+ */
+fun parseTimeOrNull(raw: String?): java.time.LocalTime? {
+    val text = raw?.trim() ?: return null
+    if (text.isEmpty()) return null
+    val parts = text.replace(' ', ':').replace('.', ':').split(':')
+    if (parts.size != 2) return null
+    val h = parts[0].toIntOrNull() ?: return null
+    val m = parts[1].toIntOrNull() ?: return null
+    if (h !in 0..23 || m !in 0..59) return null
+    return java.time.LocalTime.of(h, m)
+}
+
+/** Привести ввод к «HH:mm» или вернуть null, если время некорректное. */
+fun normalizeTime(raw: String?): String? =
+    parseTimeOrNull(raw)?.let { "%02d:%02d".format(it.hour, it.minute) }
+
+/**
+ * Длительность смены в часах по интервалу. Ночной переход через полночь
+ * (20:00–08:00) считается как 12 ч; равные концы — 24 ч (сутки).
+ */
+fun intervalHours(start: String?, end: String?): Double? {
+    val s = parseTimeOrNull(start) ?: return null
+    val e = parseTimeOrNull(end) ?: return null
+    var minutes = java.time.Duration.between(s, e).toMinutes()
+    if (minutes <= 0) minutes += 1440
+    return minutes / 60.0
+}
+
+/** Интервал, который подходит типу смены — для подстановки по умолчанию. */
+fun defaultInterval(kind: com.shiftcalendar.data.ShiftKind): Pair<String, String> = when (kind) {
+    com.shiftcalendar.data.ShiftKind.NIGHT -> NIGHT_START to NIGHT_END
+    else -> DAY_START to DAY_END
+}
+
+/** Часы из строки «HH:mm» для сдвига «+»/«−» на один шаг. */
+fun shiftTime(value: String?, deltaMinutes: Int, fallback: String): String {
+    val base = parseTimeOrNull(value) ?: parseTimeOrNull(fallback) ?: java.time.LocalTime.MIDNIGHT
+    val next = base.plusMinutes(deltaMinutes.toLong())
+    return "%02d:%02d".format(next.hour, next.minute)
+}
+
 fun formatMoney(value: Double): String {
     val whole = value.toLong()
     val frac = Math.round((value - whole) * 100).toInt()

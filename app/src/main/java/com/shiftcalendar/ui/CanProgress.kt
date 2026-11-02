@@ -7,6 +7,8 @@ import androidx.compose.foundation.background
 import androidx.compose.foundation.border
 import androidx.compose.foundation.clickable
 import androidx.compose.foundation.layout.*
+import androidx.compose.foundation.lazy.LazyRow
+import androidx.compose.foundation.lazy.itemsIndexed
 import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.material3.Text
 import androidx.compose.runtime.Composable
@@ -24,64 +26,35 @@ import androidx.compose.ui.graphics.drawscope.clipPath
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
-import java.time.Duration
+import com.shiftcalendar.data.Shift
+import com.shiftcalendar.model.*
 import java.time.LocalDate
 import java.time.LocalDateTime
 import java.time.LocalTime
-import com.shiftcalendar.data.Shift
-import com.shiftcalendar.model.*
 
 /**
  * Банка-прогресс смены: заливка растёт снизу вверх по доле прошедших часов.
  * Нарисована векторно (по мотивам Black Monster), картинка-фото не нужна.
+ *
+ * Сама банка внутри всегда тёмная — так задумано брендом, поэтому её цвета
+ * не берём из палитры темы. Совсем светлые части (пустая банка) — из темы.
  */
-object BankPalette {
-    val MonsterGreen = Color(0xFF6CC24A)
-    val MonsterGreenDark = Color(0xFF3E8E2A)
-    val CanDark = Color(0xFF1A1C20)
-    val Metal = Color(0xFFC9CDD4)
-    val Empty = Color(0xFFEDEFF2)
-}
-
-/**
- * Доля прошедшей смены, 0..1. Для ночной смены конец наступает на
- * следующий день — учитываем переход через полночь.
- */
-fun shiftProgress(shift: Shift, now: LocalDateTime = LocalDateTime.now()): Float {
-    if (shift.isDayOff) return 0f
-    val start = shift.startTime?.let { LocalTime.parse(it) } ?: return 0f
-    val endStr = shift.endTime ?: when (shift.kind) {
-        "NIGHT" -> NIGHT_END
-        "DAY" -> DAY_END
-        else -> return 0f
-    }
-    val date = LocalDate.parse(shift.date, ISO)
-    val startDt = LocalDateTime.of(date, start)
-    var endDt = LocalDateTime.of(date, LocalTime.parse(endStr))
-    if (!endDt.isAfter(startDt)) endDt = endDt.plusDays(1)  // ночь через полночь
-    if (now.isBefore(startDt)) return 0f
-    if (now.isAfter(endDt)) return 1f
-    val total = Duration.between(startDt, endDt).seconds.toFloat()
-    if (total <= 0f) return 0f
-    return (Duration.between(startDt, now).seconds.toFloat() / total).coerceIn(0f, 1f)
-}
-
-/**
- * Найти смену, идущую прямо сейчас (в том числе ночную, начавшуюся вчера).
- */
-fun currentShift(months: List<com.shiftcalendar.ui.MonthSummary>, now: LocalDateTime): Shift? {
-    val all = months.flatMap { it.shifts }.filter { !it.isDayOff && it.startTime != null }
-    return all.firstOrNull { shiftProgress(it, now) > 0f && shiftProgress(it, now) < 1f }
-}
-
 @Composable
-fun BankProgressCard(shift: Shift, now: LocalDateTime, onOpen: () -> Unit) {
+fun BankProgressCard(
+    shift: Shift,
+    now: LocalDateTime,
+    threshold: LocalTime = LocalTime.of(22, 0),
+    nightEnd: LocalTime = LocalTime.of(6, 0),
+    percent: Double = 20.0,
+    onOpen: () -> Unit
+) {
     val progress by animateFloatAsState(
         targetValue = shiftProgress(shift, now),
         animationSpec = tween(durationMillis = 900),
         label = "bank"
     )
     val date = LocalDate.parse(shift.date, ISO)
+    val worked = workedHours(shift, now)
     Column(
         Modifier
             .fillMaxWidth()
@@ -92,12 +65,25 @@ fun BankProgressCard(shift: Shift, now: LocalDateTime, onOpen: () -> Unit) {
             .clickable(onClick = onOpen)
             .padding(16.dp)
     ) {
-        Text(
-            "ИДЁТ СМЕНА",
-            fontSize = 10.sp,
-            fontWeight = FontWeight.Bold,
-            color = BankPalette.MonsterGreenDark
-        )
+        Row(
+            Modifier.fillMaxWidth(),
+            verticalAlignment = Alignment.CenterVertically
+        ) {
+            Text(
+                "ИДЁТ СМЕНА",
+                modifier = Modifier.weight(1f),
+                fontSize = 10.sp,
+                fontWeight = FontWeight.Bold,
+                color = BankPalette.MonsterGreenDark
+            )
+            // Живые значения перерисовываются тиком раз в минуту.
+            Text(
+                hhmm(now),
+                fontSize = 10.sp,
+                fontWeight = FontWeight.Medium,
+                color = Palette.Muted
+            )
+        }
         Spacer(Modifier.height(12.dp))
         Row(verticalAlignment = Alignment.CenterVertically) {
             Can(fill = progress, modifier = Modifier.size(width = 62.dp, height = 104.dp))
@@ -121,7 +107,7 @@ fun BankProgressCard(shift: Shift, now: LocalDateTime, onOpen: () -> Unit) {
                 )
                 Spacer(Modifier.height(10.dp))
                 Text(
-                    "Прошло ${(progress * 100).toInt()}%",
+                    "Прошло ${(progress * 100).toInt()}% · ${formatHours(worked)}",
                     fontSize = 14.sp,
                     fontWeight = FontWeight.SemiBold,
                     color = BankPalette.MonsterGreenDark
@@ -129,7 +115,7 @@ fun BankProgressCard(shift: Shift, now: LocalDateTime, onOpen: () -> Unit) {
                 if (shift.rate > 0) {
                     Spacer(Modifier.height(4.dp))
                     Text(
-                        "Заработано ${formatMoney(shift.hours * shift.rate * progress)}",
+                        "Заработано ${formatMoney(liveEarnings(shift, now, threshold, nightEnd, percent))}",
                         fontSize = 12.sp,
                         color = Palette.Muted
                     )
@@ -145,42 +131,75 @@ fun BankProgressCard(shift: Shift, now: LocalDateTime, onOpen: () -> Unit) {
     }
 }
 
+/**
+ * Банки монстров: одна банка за каждый час текущей смены.
+ * 12-часовая смена — 12 банок, 2-часовая — 2. Банок может быть много,
+ * поэтому список горизонтально прокручивается, а не сжимается.
+ */
 @Composable
 fun MonsterBanks(shift: Shift?, now: LocalDateTime) {
-    Column(Modifier.fillMaxWidth().padding(horizontal = 12.dp).clip(RoundedCornerShape(16.dp)).background(Palette.CardBg).border(1.dp, Palette.Outline, RoundedCornerShape(16.dp)).padding(12.dp)) {
-        Text("Банки монстров", fontSize = 14.sp, fontWeight = FontWeight.Bold, color = Palette.Ink)
+    val total = shift?.let(::canCountFor) ?: 0
+    val elapsed = shift?.let { elapsedHours(it, now) } ?: 0.0
+    Column(
+        Modifier
+            .fillMaxWidth()
+            .padding(horizontal = 12.dp)
+            .clip(RoundedCornerShape(16.dp))
+            .background(Palette.CardBg)
+            .border(1.dp, Palette.Outline, RoundedCornerShape(16.dp))
+            .padding(12.dp)
+    ) {
+        Row(Modifier.fillMaxWidth(), verticalAlignment = Alignment.CenterVertically) {
+            Text(
+                "Банки монстров",
+                modifier = Modifier.weight(1f),
+                fontSize = 14.sp,
+                fontWeight = FontWeight.Bold,
+                color = Palette.Ink
+            )
+            Text(
+                if (shift == null) "нет смены"
+                else "${formatHours(elapsed)} из ${total}",
+                fontSize = 11.sp,
+                color = Palette.Muted
+            )
+        }
         Spacer(Modifier.height(8.dp))
-        val elapsedHours = if (shift == null) 0.0 else {
-            val start = shift.startTime?.let { LocalDateTime.of(LocalDate.parse(shift.date, ISO), LocalTime.parse(it)) }
-            val end = shift.endTime?.let { LocalDateTime.of(LocalDate.parse(shift.date, ISO), LocalTime.parse(it)) }
-            if (start == null || end == null) 0.0 else {
-                val endAdjusted = if (!end.isAfter(start)) end.plusDays(1) else end
-                (Duration.between(start, now).toMinutes().coerceIn(0, Duration.between(start, endAdjusted).toMinutes()) / 60.0)
+        if (shift == null || total == 0) {
+            Text(
+                "Банки появятся во время смены: одна банка за час",
+                fontSize = 11.sp,
+                color = Palette.Muted
+            )
+            return@Column
+        }
+        LazyRow(
+            Modifier.fillMaxWidth(),
+            horizontalArrangement = Arrangement.spacedBy(6.dp)
+        ) {
+            itemsIndexed(List(total) { it }, key = { i, _ -> i }) { index, _ ->
+                Can(
+                    fill = canFill(index, elapsed),
+                    modifier = Modifier.size(width = 28.dp, height = 50.dp)
+                )
             }
         }
-        Row(Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.SpaceEvenly) {
-            (0 until 8).forEach { index ->
-                val fill = (elapsedHours - index).coerceIn(0.0, 1.0).toFloat()
-                Can(fill = fill, modifier = Modifier.size(width = 30.dp, height = 54.dp))
-            }
-        }
-        Spacer(Modifier.height(4.dp))
-        Text(if (shift == null) "Выберите смену для прогресса" else "${elapsedHours.toInt()} / 8 часов", fontSize = 11.sp, color = Palette.Muted)
     }
 }
 
 /**
- * Банка: пока прогресс 0 — серый контур, по мере смены зелёная заливка
+ * Банка: пока прогресс 0 — светлый контур, по мере смены тёмная заливка
  * поднимается снизу вверх и проявляется логотип-«когти».
  */
 @Composable
 fun Can(fill: Float, modifier: Modifier = Modifier) {
+    val empty = BankPalette.Empty
     Canvas(modifier = modifier) {
-        drawCan(fill)
+        drawCan(fill.coerceIn(0f, 1f), empty)
     }
 }
 
-private fun DrawScope.drawCan(fill: Float) {
+private fun DrawScope.drawCan(fill: Float, empty: Color) {
     val w = size.width
     val h = size.height
     val bodyTop = h * 0.10f
@@ -200,7 +219,7 @@ private fun DrawScope.drawCan(fill: Float) {
         quadraticBezierTo(0f, bodyBottom, 0f, bodyBottom - corner)
         close()
     }
-    drawPath(bodyPath, color = BankPalette.Empty)
+    drawPath(bodyPath, color = empty)
 
     // Заливка снизу вверх по доле прошедшей смены
     if (fill > 0f) {
