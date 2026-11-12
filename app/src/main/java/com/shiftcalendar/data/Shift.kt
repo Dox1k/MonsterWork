@@ -168,7 +168,7 @@ interface ShiftDao {
     suspend fun deleteByProfile(profileId: Long)
 }
 
-@Database(entities = [Shift::class], version = 3, exportSchema = false)
+@Database(entities = [Shift::class], version = 4, exportSchema = false)
 abstract class AppDb : RoomDatabase() {
     abstract fun shifts(): ShiftDao
 }

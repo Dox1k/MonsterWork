@@ -1,0 +1,187 @@
+<!DOCTYPE html>
+<html lang="ru">
+<head>
+<meta charset="utf-8">
+<style>
+  body { margin: 0; font-family: inherit; color: var(--foreground); }
+  .wrap { display: flex; gap: 24px; flex-wrap: wrap; align-items: flex-start; }
+  .phone {
+    width: 300px; border: 1px solid var(--border); border-radius: 22px;
+    padding: 14px; background: var(--card);
+  }
+  .caption { font-size: 12px; color: var(--muted-foreground); margin-bottom: 10px; font-weight: 600; }
+  .hdr { display: flex; align-items: center; justify-content: space-between; margin-bottom: 12px; }
+  .hdr h3 { margin: 0; font-size: 17px; }
+  .pill { font-size: 11px; padding: 5px 11px; background: var(--foreground); color: var(--card); border-radius: 10px; font-weight: 600; }
+  .year { text-align: center; font-size: 13px; font-weight: 700; margin: 6px 0 8px; }
+  .strip { display: flex; gap: 6px; overflow: hidden; margin-bottom: 12px; }
+  .m { flex: 0 0 auto; font-size: 10px; padding: 5px 8px; border: 1px solid var(--border); border-radius: 9px; color: var(--muted-foreground); }
+  .m.sel { background: var(--foreground); color: var(--card); border-color: var(--foreground); font-weight: 700; }
+  .bankcard { border: 1px solid var(--border); border-radius: 14px; padding: 10px; margin-bottom: 12px; display: flex; gap: 12px; align-items: center; }
+  .can { width: 34px; height: 58px; border-radius: 5px; background: #1a1c20; position: relative; overflow: hidden; }
+  .can .fill { position: absolute; left: 0; right: 0; bottom: 0; background: #6cc24a; }
+  .can .rim { position: absolute; left: 3px; right: 3px; top: 0; height: 4px; background: #c9cdd4; border-radius: 2px; }
+  .can .rim.b { top: auto; bottom: 0; }
+  .bankcard .big { font-size: 15px; font-weight: 700; }
+  .bankcard .sm { font-size: 11px; color: var(--muted-foreground); }
+  .grid { display: grid; grid-template-columns: repeat(7, 1fr); gap: 3px; margin-bottom: 6px; }
+  .dow { font-size: 9px; text-align: center; color: var(--muted-foreground); }
+  .day { aspect-ratio: 1; border-radius: 7px; display: flex; flex-direction: column; align-items: center; justify-content: center; font-size: 11px; border: 1px solid var(--border); color: var(--foreground); }
+  .day.w { background: #d8433c; color: #fff; border-color: #d8433c; font-weight: 700; }
+  .day.o { background: #2e9e5b; color: #fff; border-color: #2e9e5b; font-weight: 700; }
+  .day.t { outline: 2px solid var(--foreground); outline-offset: -2px; }
+  .day .slots { display: flex; gap: 1px; margin-top: 1px; }
+  .day .slots i { width: 3px; height: 3px; border-radius: 1px; display: block; }
+  .day.multi { background: #d8433c; color: #fff; border-color: #d8433c; font-weight: 700; }
+  .banks { border: 1px solid var(--border); border-radius: 14px; padding: 9px 10px; margin: 10px 0; }
+  .banks .t { font-size: 12px; font-weight: 700; margin-bottom: 7px; display: flex; justify-content: space-between; }
+  .banks .row { display: flex; gap: 4px; }
+  .banks .row .can { width: 17px; height: 30px; }
+  .legend { display: flex; gap: 12px; margin: 8px 0; font-size: 10px; color: var(--muted-foreground); align-items: center; }
+  .legend .dot { width: 9px; height: 9px; border-radius: 50%; display: inline-block; margin-right: 3px; vertical-align: middle; }
+  .legend .lt { display: flex; align-items: center; }
+  .totals { border: 1px solid var(--border); border-radius: 14px; padding: 11px; display: flex; justify-content: space-between; margin-bottom: 9px; }
+  .totals .lbl { font-size: 9px; color: var(--muted-foreground); }
+  .totals .val { font-size: 15px; font-weight: 700; }
+  .del { display: flex; gap: 7px; }
+  .del button { flex: 1; font-size: 10px; padding: 9px; border-radius: 9px; border: 1px solid var(--border); background: transparent; color: #d8433c; font-weight: 600; }
+  .del button.all { color: var(--foreground); }
+  .timebox { display: flex; align-items: center; gap: 4px; margin: 10px 0; }
+  .tb { width: 38px; height: 40px; border: 1px solid var(--border); border-radius: 8px; display: flex; align-items: center; justify-content: center; font-size: 17px; font-weight: 700; }
+  .colon { font-size: 19px; font-weight: 700; color: var(--muted-foreground); }
+  .fld { border: 1px solid var(--border); border-radius: 8px; padding: 9px; font-size: 12px; margin: 6px 0; color: var(--muted-foreground); }
+  .lbl2 { font-size: 10px; color: var(--muted-foreground); font-weight: 600; }
+  .note { font-size: 11px; color: var(--muted-foreground); margin-top: 8px; max-width: 300px; line-height: 1.5; }
+  .new { color: #2e9e5b; font-weight: 700; font-size: 10px; }
+  .restored { color: #d8433c; font-weight: 700; font-size: 10px; }
+</style>
+</head>
+<body>
+<div class="wrap">
+
+  <div class="phone">
+    <div class="caption">ГЛАВНЫЙ ЭКРАН — целевой вид</div>
+    <div class="hdr">
+      <h3>Календарь смен</h3>
+      <span class="pill">Паттерн</span>
+    </div>
+    <div class="year">‹ 2026 ›</div>
+    <div class="strip">
+      <div class="m">Сен</div><div class="m sel">Окт</div><div class="m">Ноя</div>
+      <div class="m">Дек</div><div class="m">Янв</div><div class="m">Фев</div>
+    </div>
+
+    <div class="bankcard">
+      <div class="can"><div class="fill" style="height:58%"></div><div class="rim"></div><div class="rim b"></div></div>
+      <div>
+        <div class="big">Идёт смена · День</div>
+        <div class="sm">08:00 · 12 ч · 2 октября</div>
+        <div class="sm" style="color:#2e9e5b;font-weight:600">Прошло 58% · 7 ч</div>
+      </div>
+    </div>
+
+    <div class="grid">
+      <div class="dow">Пн</div><div class="dow">Вт</div><div class="dow">Ср</div><div class="dow">Чт</div><div class="dow">Пт</div><div class="dow">Сб</div><div class="dow">Вс</div>
+      <div class="day"></div><div class="day w">1</div><div class="day w">2</div><div class="day multi t">3<span class="slots"><i style="background:#2f6fdb"></i><i style="background:#8e4ec6"></i></span></div>
+      <div class="day w">4</div><div class="day o">5</div><div class="day o">6</div>
+      <div class="day w">7</div><div class="day w">8</div><div class="day o">9</div><div class="day w">10</div>
+      <div class="day multi">11<span class="slots"><i style="background:#2f6fdb"></i></span></div>
+      <div class="day o">12</div><div class="day o">13</div>
+      <div class="day w">14</div><div class="day o">15</div><div class="day o">16</div><div class="day w">17</div>
+      <div class="day w">18</div><div class="day o">19</div><div class="day o">20</div>
+      <div class="day w">21</div><div class="day w">22</div><div class="day o">23</div><div class="day w">24</div>
+      <div class="day multi">25<span class="slots"><i style="background:#2f6fdb"></i></span></div><div class="day o">26</div><div class="day o">27</div>
+      <div class="day w">28</div><div class="day w">29</div><div class="day o">30</div><div class="day o">31</div>
+    </div>
+
+    <div class="banks">
+      <div class="t"><span>Банки монстров <span class="restored">← вернуть</span></span><span style="font-weight:400;color:var(--muted-foreground)">7 ч из 12</span></div>
+      <div class="row">
+        <div class="can"><div class="fill" style="height:100%"></div><div class="rim"></div></div>
+        <div class="can"><div class="fill" style="height:100%"></div><div class="rim"></div></div>
+        <div class="can"><div class="fill" style="height:100%"></div><div class="rim"></div></div>
+        <div class="can"><div class="fill" style="height:100%"></div><div class="rim"></div></div>
+        <div class="can"><div class="fill" style="height:100%"></div><div class="rim"></div></div>
+        <div class="can"><div class="fill" style="height:100%"></div><div class="rim"></div></div>
+        <div class="can"><div class="fill" style="height:100%"></div><div class="rim"></div></div>
+        <div class="can"><div class="fill" style="height:40%"></div><div class="rim"></div></div>
+        <div class="can"><div class="fill" style="height:0%"></div><div class="rim"></div></div>
+        <div class="can"><div class="fill" style="height:0%"></div><div class="rim"></div></div>
+        <div class="can"><div class="fill" style="height:0%"></div><div class="rim"></div></div>
+        <div class="can"><div class="fill" style="height:0%"></div><div class="rim"></div></div>
+      </div>
+    </div>
+
+    <div class="legend">
+      <span class="lt"><i class="dot" style="background:#d8433c"></i>рабочая</span>
+      <span class="lt"><i class="dot" style="background:#2f6fdb"></i>2-я смена</span>
+      <span class="lt"><i class="dot" style="background:#2e9e5b"></i>выходной</span>
+      <span class="new">← только используемые</span>
+    </div>
+
+    <div class="totals">
+      <div><div class="lbl">СМЕН</div><div class="val">18</div></div>
+      <div><div class="lbl">ЧАСОВ</div><div class="val">216 ч</div></div>
+      <div><div class="lbl">ЗАРПЛАТА</div><div class="val" style="color:#2e9e5b">108 000 ₽</div></div>
+    </div>
+
+    <div class="del">
+      <button>Удалить смены месяца</button>
+      <button class="all">Удалить все смены</button>
+    </div>
+  </div>
+
+  <div class="phone">
+    <div class="caption">РЕДАКТОР ДНЯ — целевой вид</div>
+    <div style="font-size:15px;font-weight:700">3 октября · Чт</div>
+    <div style="font-size:11px;color:var(--muted-foreground);margin-bottom:12px">2 смены · 14 ч</div>
+
+    <div style="display:flex;gap:6px;font-size:11px;margin-bottom:10px">
+      <span style="flex:1;text-align:center;padding:7px;border-radius:8px;background:var(--foreground);color:var(--card);font-weight:700">День</span>
+      <span style="flex:1;text-align:center;padding:7px;border:1px solid var(--border);border-radius:8px">Ночь</span>
+      <span style="flex:1;text-align:center;padding:7px;border:1px solid var(--border);border-radius:8px">Выходной</span>
+    </div>
+
+    <div class="lbl2">НАЧАЛО</div>
+    <div class="timebox">
+      <div class="tb">0</div><div class="tb">8</div>
+      <span class="colon">:</span>
+      <div class="tb">0</div><div class="tb">0</div>
+      <span class="new" style="margin-left:6px">← квадраты, ‹:› некликабельно</span>
+    </div>
+    <div class="lbl2">КОНЕЦ</div>
+    <div class="timebox">
+      <div class="tb">2</div><div class="tb">0</div>
+      <span class="colon">:</span>
+      <div class="tb">0</div><div class="tb">0</div>
+    </div>
+
+    <div class="lbl2" style="margin-top:12px">ПЕРЕРЫВ</div>
+    <div style="display:flex;align-items:center;gap:8px;margin:6px 0">
+      <div class="fld" style="flex:1;margin:0">60</div>
+      <span style="font-size:12px;color:var(--muted-foreground)">мин</span>
+      <span class="new">← без −5/+5</span>
+    </div>
+
+    <div class="lbl2" style="margin-top:10px">СТАВКА, ₽/ЧАС</div>
+    <div class="fld">500</div>
+
+    <div style="border:1px solid var(--border);border-radius:10px;padding:10px;margin-top:10px;background:rgba(46,158,91,.08)">
+      <div class="lbl2">ВЫЙДЕТ ЗА СМЕНУ</div>
+      <div style="font-size:17px;font-weight:700">11 000 ₽ <span style="font-size:11px;font-weight:400;color:var(--muted-foreground)">(надбавка 20%)</span></div>
+    </div>
+
+    <div style="display:flex;gap:8px;margin-top:14px">
+      <span style="flex:1;text-align:center;padding:11px;border-radius:10px;background:var(--foreground);color:var(--card);font-weight:700;font-size:13px">Сохранить</span>
+      <span style="text-align:center;padding:11px 16px;border-radius:10px;border:1px solid var(--border);color:#d8433c;font-weight:700;font-size:13px">Удалить</span>
+    </div>
+
+    <div class="note">
+      <span class="restored">← вернуть:</span> кнопка «Завершить смену и получить банку»
+      (случайная банка-награда в коллекцию).
+    </div>
+  </div>
+
+</div>
+</body>
+</html>
