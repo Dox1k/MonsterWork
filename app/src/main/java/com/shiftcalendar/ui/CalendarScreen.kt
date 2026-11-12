@@ -371,6 +371,11 @@ private fun DayCell(
         Column(horizontalAlignment = Alignment.CenterHorizontally) {
             // Число: белое на залитом квадрате, черное — на пустом.
             val filled = ordered.isNotEmpty()
+            // День с двумя профилями — половины разного цвета: между ними
+            // проходит тонкая чёрная линия, чтобы граница была видна.
+            if (split != null && split.first != split.second) {
+                Box(Modifier.fillMaxWidth().height(1.dp).background(Palette.Hairline))
+            }
             Text(
                 "${date.dayOfMonth}",
                 fontSize = 13.sp,

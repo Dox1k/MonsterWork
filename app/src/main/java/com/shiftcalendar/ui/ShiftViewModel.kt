@@ -152,6 +152,13 @@ data class UiState(
         if (premium.isOff) return PremiumSplit(0L, intervalMinutes(s, e) - breakMinutes.coerceAtLeast(0))
         return premiumSplitByThreshold(s, e, t, breakMinutes, premiumBreakAfterStart)
     }
+
+    /** Способ расчёта надбавки словами: «20%» или «50 ₽/ч». */
+    val premiumLegend: String
+        get() = when (premiumMode) {
+            PremiumMode.PERCENT -> "${formatPercent(nightPremiumPercent)}%"
+            PremiumMode.AMOUNT -> "${formatPercent(premiumAmount)} ₽/ч"
+        }
 }
 
 class ShiftViewModel(app: Application) : AndroidViewModel(app) {

@@ -111,6 +111,7 @@ data class PremiumSplit(
     /** Минуты внутри окна надбавки (оплачиваются по надбавочной ставке). */
     val premiumMinutes: Long
 ) {
+    /** Все оплаченные минуты смены: база плюс надбавка. */
     val totalMinutes: Long get() = baseMinutes + premiumMinutes
 }
 

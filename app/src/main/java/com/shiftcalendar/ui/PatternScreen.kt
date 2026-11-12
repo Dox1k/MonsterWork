@@ -45,18 +45,14 @@ fun PatternScreen(
     onUpdate: (Int, PatternStep) -> Unit,
     onStepStart: (Int, String) -> Unit,
     onStepEnd: (Int, String) -> Unit,
-    onNudgeStepStart: (Int, Int) -> Unit,
-    onNudgeStepEnd: (Int, Int) -> Unit,
     onStepBreak: (Int, Int) -> Unit,
     onAllRates: (Double) -> Unit,
     onStart: (LocalDate) -> Unit,
     onThreshold: (String) -> Unit,
-    onNightEnd: (String) -> Unit,
     onPercent: (Double) -> Unit,
     onPremiumTitle: (String) -> Unit,
     onPremiumMode: (PremiumMode) -> Unit,
     onPremiumAmount: (Double) -> Unit,
-    onPremiumBreakAfterStart: (Boolean) -> Unit,
     onUntil: (LocalDate) -> Unit,
     onAlign: (Boolean) -> Unit,
     onPreview: () -> Unit,
@@ -162,8 +158,6 @@ fun PatternScreen(
                         onChange = { onUpdate(i, it) },
                         onStartText = { onStepStart(i, it) },
                         onEndText = { onStepEnd(i, it) },
-                        onNudgeStart = { onNudgeStepStart(i, it) },
-                        onNudgeEnd = { onNudgeStepEnd(i, it) },
                         onBreak = { onStepBreak(i, it) },
                         onRemove = { onRemove(i) }
                     )
@@ -207,7 +201,6 @@ fun PatternScreen(
             Spacer(Modifier.height(8.dp))
             var showStartPicker by remember { mutableStateOf(false) }
             var showThresholdPicker by remember { mutableStateOf(false) }
-            var showNightEndPicker by remember { mutableStateOf(false) }
             Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
                 OutlinedButton(
             onClick = { showStartPicker = true },
@@ -231,8 +224,8 @@ fun PatternScreen(
                 }
             }
             Spacer(Modifier.height(8.dp))
-            // Надбавка задаётся пользователем (решение 13-Б): название, способ
-            // (процент или сумма за час) и учёт перерыва после начала надбавки.
+            // Надбавка задаётся пользователем: название, способ (процент или сумма
+            // за час) и время, С которого идёт доп. ставка — до конца смены.
             PremiumTitleField(value = state.premiumTitle, onChange = onPremiumTitle)
             Spacer(Modifier.height(6.dp))
             Row(horizontalArrangement = Arrangement.spacedBy(6.dp)) {
@@ -250,39 +243,6 @@ fun PatternScreen(
                 AmountField(value = state.premiumAmount, onChange = onPremiumAmount)
             }
             Spacer(Modifier.height(6.dp))
-            ToggleRow(
-                title = "Перерыв съедает надбавку",
-                subtitle = "Перерыв после начала надбавки вычитается из надбавочных часов",
-                checked = state.premiumBreakAfterStart,
-                onChecked = onPremiumBreakAfterStart
-            )
-            Spacer(Modifier.height(8.dp))
-            // Конец окна надбавки
-            Row(
-                Modifier
-                    .fillMaxWidth()
-                    .clip(RoundedCornerShape(12.dp))
-                    .background(Palette.CardBg)
-                    .border(1.dp, Palette.Outline, RoundedCornerShape(12.dp))
-                    .clickable { showNightEndPicker = true }
-                    .padding(12.dp),
-                verticalAlignment = Alignment.CenterVertically
-            ) {
-                Column(Modifier.weight(1f)) {
-                    Text("Надбавка до", fontSize = 13.sp, color = Palette.Ink)
-                    Text(
-                        " часы после этого времени — снова базовая ставка",
-                        fontSize = 11.sp, color = Palette.Muted
-                    )
-                }
-                Text(state.nightEnd, fontSize = 16.sp, fontWeight = FontWeight.SemiBold, color = Palette.Ink)
-            }
-            if (showNightEndPicker) {
-                val context = LocalContext.current
-                LaunchedEffect(Unit) {
-                    TimePickerDialog(context, { _, h, m -> onNightEnd("%02d:%02d".format(h, m)); showNightEndPicker = false }, state.nightEnd.take(2).toIntOrNull() ?: 6, state.nightEnd.drop(3).take(2).toIntOrNull() ?: 0, true).show()
-                }
-            }
             Spacer(Modifier.height(8.dp))
             DateRow("Проставить до", state.patternUntil) { onUntil(it) }
 
@@ -552,8 +512,6 @@ private fun PatternStepRow(
     onChange: (PatternStep) -> Unit,
     onStartText: (String) -> Unit,
     onEndText: (String) -> Unit,
-    onNudgeStart: (Int) -> Unit,
-    onNudgeEnd: (Int) -> Unit,
     onBreak: (Int) -> Unit,
     onRemove: () -> Unit
 ) {
@@ -651,26 +609,21 @@ private fun PatternStepRow(
             }
             if (!step.isDayOff) {
                 Spacer(Modifier.height(10.dp))
-                Row(horizontalArrangement = Arrangement.spacedBy(8.dp), verticalAlignment = Alignment.Top) {
-                    TimeField(
-                        label = "Начало",
-                        value = timeFieldText(step.startTime ?: step.start),
-                        onChange = onStartText,
-                        onPick = { onChange(step.copy(startTime = step.startTime ?: step.start, endTime = step.endTime ?: step.end)) },
-                        onNudge = onNudgeStart,
-                        invalid = intervalHours(step.start, step.end) == null && step.endTime != null,
-                        modifier = Modifier.weight(1f)
-                    )
-                    TimeField(
-                        label = "Конец",
-                        value = timeFieldText(step.endTime ?: step.end),
-                        onChange = onEndText,
-                        onPick = { onChange(step.copy(startTime = step.startTime ?: step.start, endTime = step.endTime ?: step.end)) },
-                        onNudge = onNudgeEnd,
-                        invalid = intervalHours(step.start, step.end) == null && step.endTime != null,
-                        modifier = Modifier.weight(1f)
-                    )
-                }
+                TimeField(
+                    label = "Начало",
+                    value = timeFieldText(step.startTime ?: step.start),
+                    onChange = onStartText,
+                    invalid = intervalHours(step.start, step.end) == null && step.endTime != null,
+                    modifier = Modifier.fillMaxWidth()
+                )
+                Spacer(Modifier.height(8.dp))
+                TimeField(
+                    label = "Конец",
+                    value = timeFieldText(step.endTime ?: step.end),
+                    onChange = onEndText,
+                    invalid = intervalHours(step.start, step.end) == null && step.endTime != null,
+                    modifier = Modifier.fillMaxWidth()
+                )
                 Spacer(Modifier.height(8.dp))
                 // Перерыв: −5/+5 мин, вычитается из времени смены
                 Row(
@@ -871,7 +824,7 @@ private fun ToggleRow(
 private fun PremiumTitleField(value: String, onChange: (String) -> Unit) {
     OutlinedTextField(
         value = value,
-        onValueChange = { onChange(it.take(40)) },
+        onValueChange = { if (it.length <= 40) onChange(it) },
         label = { Text("Название надбавки", color = Palette.Muted) },
         placeholder = { Text("например Ночная надбавка", color = Palette.Muted) },
         singleLine = true,

@@ -45,10 +45,6 @@ fun DayEditor(
     onKind: (ShiftKind) -> Unit,
     onStartText: (String) -> Unit,
     onEndText: (String) -> Unit,
-    onPickStart: (String) -> Unit,
-    onPickEnd: (String) -> Unit,
-    onNudgeStart: (Int) -> Unit,
-    onNudgeEnd: (Int) -> Unit,
     onBreak: (Int) -> Unit,
     onSave: () -> Unit,
     onDelete: () -> Unit,
@@ -173,8 +169,6 @@ fun DayEditor(
                             label = "Начало",
                             value = state.editingStartTime,
                             onChange = onStartText,
-                            onPick = { onPickStart(state.editingStartTime) },
-                            onNudge = onNudgeStart,
                             focusKey = "start-" + state.editorGeneration,
                             modifier = Modifier.weight(1f)
                         )
@@ -182,8 +176,6 @@ fun DayEditor(
                             label = "Конец",
                             value = state.editingEndTime,
                             onChange = onEndText,
-                            onPick = { onPickEnd(state.editingEndTime) },
-                            onNudge = onNudgeEnd,
                             focusKey = "end-" + state.editorGeneration,
                             modifier = Modifier.weight(1f)
                         )
@@ -244,6 +236,19 @@ fun DayEditor(
                         fontSize = 11.sp,
                         color = if (previewHoursCompat(state) == null) Palette.ShiftRed else Palette.Muted
                     )
+                    // Надбавка идёт ОТ указанного времени и до конца смены (решение клиента).
+                    if (!state.premium.isOff) {
+                        Spacer(Modifier.height(2.dp))
+                        val split = state.premiumSplitFor(
+                            state.editingStartTime, state.editingEndTime, state.editingBreakMinutes
+                        )
+                        Text(
+                            "${state.premiumTitle} ${state.premiumLegend} — с ${state.nightThreshold} " +
+                                "(${formatHours(split.premiumMinutes / 60.0)} из ${formatHours(split.totalMinutes / 60.0)} ч)",
+                            fontSize = 10.sp,
+                            color = Palette.Muted
+                        )
+                    }
                     // Предупреждение о наложении: две смены дня идут одновременно.
                     val overlaps = remember(state.editingDayShifts, state.editingStartTime, state.editingEndTime, existing) {
                         val probe = probeShift(state, date)
@@ -452,9 +457,10 @@ private fun probeShift(state: UiState, date: LocalDate): Shift? {
 private fun previewHoursCompat(state: UiState): Double? =
     intervalHours(normalizeTime(state.editingStartTime), normalizeTime(state.editingEndTime))
 
-/** « +20% ночь» рядом с суммой, когда в смену попадает окно надбавки. */
+/** « +20% с 22:00» рядом с суммой: надбавка идёт с указанного времени до конца смены. */
 private fun premiumSuffix(state: UiState): String =
-    if (state.nightPremiumPercent > 0.0) "  (надбавка ${formatPercent(state.nightPremiumPercent)}%)" else ""
+    if (state.premium.isOff) ""
+    else "  (${state.premiumTitle.lowercase()} ${state.premiumLegend} с ${state.nightThreshold})"
 
 private fun dayTitle(date: LocalDate): String {
     val m = listOf("января","февраля","марта","апреля","мая","июня","июля","августа","сентября","октября","ноября","декабря")[date.monthValue - 1]

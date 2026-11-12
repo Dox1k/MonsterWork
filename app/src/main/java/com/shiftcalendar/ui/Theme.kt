@@ -31,7 +31,12 @@ data class AppColors(
     val outline: Color,        // рамки/разделители
     val weekendTint: Color,
     val onInk: Color,          // текст на «черных» кнопках-акцентах
-    val disabledBg: Color = ink.copy(alpha = 0.08f) // фон выключенной кнопки
+    val disabledBg: Color = ink.copy(alpha = 0.08f), // фон выключенной кнопки
+    /**
+     * Тонкая чёрная линия-разделитель. Ею отделяются друг от друга цветные
+     * половины дня, когда на день легли два профиля (решение клиента).
+     */
+    val hairline: Color = Color(0xFF000000)
 ) {
     val isDark: Boolean get() = paper.luminance() < 0.5f
 }
@@ -51,12 +56,14 @@ val LightColors = AppColors(
 val DarkColors = AppColors(
     shiftRed = Color(0xFFE8675F),
     dayOffGreen = Color(0xFF43B978),
-    ink = Color(0xFFF2F3F5),
-    paper = Color(0xFF121317),
+    // Текст не белый: чистый #FFF на тёмном фоне слепит и «звенит» по краям
+    // букв. #DCDFE4 читается так же хорошо, но не бьёт по глазам.
+    ink = Color(0xFFDCDFE4),
+    paper = Color(0xFF101114),
     muted = Color(0xFF9BA1AB),
-    cardBg = Color(0xFF1C1E24),
-    outline = Color(0xFF2E3138),
-    weekendTint = Color(0xFF191B20),
+    cardBg = Color(0xFF1A1C21),
+    outline = Color(0xFF2C2F35),
+    weekendTint = Color(0xFF17191D),
     onInk = Color(0xFF0F1115)   // в тёмной теме «черная» кнопка светлая
 )
 
@@ -159,6 +166,7 @@ object Palette {
     val Outline: Color @Composable @ReadOnlyComposable get() = LocalAppColors.current.outline
     val WeekendTint: Color @Composable @ReadOnlyComposable get() = LocalAppColors.current.weekendTint
     val OnInk: Color @Composable @ReadOnlyComposable get() = LocalAppColors.current.onInk
+    val Hairline: Color @Composable @ReadOnlyComposable get() = LocalAppColors.current.hairline
     val DisabledBg: Color @Composable @ReadOnlyComposable get() = LocalAppColors.current.disabledBg
 }
 
