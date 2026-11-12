@@ -76,12 +76,24 @@ data class UiState(
     val editingBreakMinutes: Int = 0,
     /** Причина, по которой смену нельзя сохранить (показывается в редакторе). */
     val editorError: String? = null,
-    // ---- надбавка: окно и процент ----
-    /** С этого времени часы смены считаются с надбавкой. */
+    // ---- надбавка: как считается и с какого времени (решения 13-А, 13-Б) ----
+    /** Название надбавки, задаётся пользователем: «Ночная», «Вечерняя» и т.п. */
+    val premiumTitle: String = "Ночная надбавка",
+    /** Способ расчёта: процентом от ставки или суммой за час. */
+    val premiumMode: PremiumMode = PremiumMode.PERCENT,
+    /** С этого времени часы смены считаются с надбавкой (до конца смены). */
     val nightThreshold: String = "22:00",
-    /** До этого времени действует надбавка (окно может переходить через полночь). */
-    val nightEnd: String = "06:00",
+    /** Процент надбавки — когда выбран способ «процентом». */
     val nightPremiumPercent: Double = 20.0,
+    /** Сумма надбавки, ₽/час — когда выбран способ «суммой». */
+    val premiumAmount: Double = 0.0,
+    /**
+     * Учитывать ли перерыв, попавший после начала надбавки (решение 13-Б):
+     * при true перерыв съедает сначала надбавочные часы, при false — базовые.
+     */
+    val premiumBreakAfterStart: Boolean = true,
+    /** Старое «надбавка до» — оставлено только для чтения прежних настроек. */
+    val nightEnd: String = "06:00",
     val darkTheme: Boolean = false,
     /** «Сейчас» с точностью до минуты: обновляется тиком, чтобы прогресс/заработок жили. */
     val now: java.time.LocalDateTime = java.time.LocalDateTime.now(),
@@ -120,6 +132,26 @@ data class UiState(
 
     /** Выходной в редакторе: выбран режим «Выходной» или он уже стоит у дня. */
     val editingHasDayOff: Boolean get() = editingDayOff || editingDay.dayOff
+
+    /** Настройки надбавки в виде, который понимает расчёт заработка. */
+    val premium: PremiumSettings
+        get() = PremiumSettings(
+            title = premiumTitle,
+            mode = premiumMode,
+            percent = nightPremiumPercent,
+            amount = premiumAmount,
+            threshold = nightThreshold,
+            breakCountsInPremium = premiumBreakAfterStart
+        )
+
+    /** Раскладка смены редактора на «до надбавки» и «с надбавкой», для подписи. */
+    fun premiumSplitFor(start: String, end: String, breakMinutes: Int): PremiumSplit {
+        val s = parseTimeOrNull(start) ?: return PremiumSplit(0L, 0L)
+        val e = parseTimeOrNull(end) ?: return PremiumSplit(0L, 0L)
+        val t = parseTimeOrNull(premium.threshold) ?: java.time.LocalTime.of(22, 0)
+        if (premium.isOff) return PremiumSplit(0L, intervalMinutes(s, e) - breakMinutes.coerceAtLeast(0))
+        return premiumSplitByThreshold(s, e, t, breakMinutes, premiumBreakAfterStart)
+    }
 }
 
 class ShiftViewModel(app: Application) : AndroidViewModel(app) {
@@ -132,6 +164,12 @@ class ShiftViewModel(app: Application) : AndroidViewModel(app) {
             nightThreshold = prefs.getString("night_threshold", "22:00") ?: "22:00",
             nightEnd = prefs.getString("night_end", "06:00") ?: "06:00",
             nightPremiumPercent = prefs.getString("night_percent", "20")?.toDoubleOrNull()?.coerceIn(0.0, 100.0) ?: 20.0,
+            premiumTitle = prefs.getString("premium_title", "Ночная надбавка") ?: "Ночная надбавка",
+            premiumMode = runCatching {
+                PremiumMode.valueOf(prefs.getString("premium_mode", "PERCENT") ?: "PERCENT")
+            }.getOrDefault(PremiumMode.PERCENT),
+            premiumAmount = prefs.getString("premium_amount", "0")?.toDoubleOrNull()?.coerceAtLeast(0.0) ?: 0.0,
+            premiumBreakAfterStart = prefs.getBoolean("premium_break_after", true),
             darkTheme = prefs.getBoolean("dark_theme", false),
             collection = prefs.getStringSet("collection", emptySet())!!.mapNotNull(::decodeReward),
             rewardsByShift = prefs.all.filterKeys { it.startsWith("reward_") }
@@ -328,6 +366,38 @@ class ShiftViewModel(app: Application) : AndroidViewModel(app) {
         refresh()
     }
 
+    /** Название надбавки — свободный текст, показывается в редакторе и итогах. */
+    fun setPremiumTitle(value: String) {
+        val title = value.take(40)
+        prefs.edit().putString("premium_title", title).apply()
+        _state.value = _state.value.copy(premiumTitle = title)
+    }
+
+    /** Способ расчёта надбавки: процентом от ставки или фиксированной суммой за час. */
+    fun setPremiumMode(mode: PremiumMode) {
+        prefs.edit().putString("premium_mode", mode.name).apply()
+        _state.value = _state.value.copy(premiumMode = mode)
+        refresh()
+    }
+
+    /** Сумма надбавки, ₽/час: 0–100000. */
+    fun setPremiumAmount(value: Double) {
+        val amount = value.coerceIn(0.0, 100_000.0)
+        prefs.edit().putString("premium_amount", amount.toString()).apply()
+        _state.value = _state.value.copy(premiumAmount = amount)
+        refresh()
+    }
+
+    /**
+     * Считать ли перерыв, попавший после начала надбавки, вычетом из надбавочных
+     * часов (решение 13-Б). true — съедает надбавку, false — базовые часы.
+     */
+    fun setPremiumBreakAfterStart(value: Boolean) {
+        prefs.edit().putBoolean("premium_break_after", value).apply()
+        _state.value = _state.value.copy(premiumBreakAfterStart = value)
+        refresh()
+    }
+
     /**
      * Конец окна надбавки. Если конец совпал с началом — окно пустое, надбавки нет:
      * в этом случае сдвигаем конец на минуту, чтобы окно никогда не «схлопнулось» молча.
@@ -357,13 +427,14 @@ class ShiftViewModel(app: Application) : AndroidViewModel(app) {
         _state.value = _state.value.copy(darkTheme = enabled)
     }
 
-    /** Заработок смены: окно надбавки + перерыв. */
+    /** Заработок смены: надбавка от порога до конца смены + перерыв (решения 13-А/13-Б). */
     fun shiftEarnings(shift: Shift): Double {
-        val threshold = runCatching { java.time.LocalTime.parse(_state.value.nightThreshold) }
-            .getOrDefault(java.time.LocalTime.of(22, 0))
-        val end = runCatching { java.time.LocalTime.parse(_state.value.nightEnd) }
-            .getOrDefault(java.time.LocalTime.of(6, 0))
-        return shiftEarnings(shift, threshold, end, _state.value.nightPremiumPercent, shift.breakMinutes)
+        if (shift.isDayOff || shift.rate <= 0.0) return 0.0
+        val premium = _state.value.premium
+        if (premium.isOff) return roundMoney(shift.hours * shift.rate)
+        val start = parseTimeOrNull(shift.startTime ?: "") ?: return roundMoney(shift.hours * shift.rate)
+        val end = parseTimeOrNull(shift.endTime ?: "") ?: return roundMoney(shift.hours * shift.rate)
+        return roundMoney(shiftEarningsWithPremium(shift.rate, start, end, premium, shift.breakMinutes))
     }
 
     /**
@@ -404,14 +475,14 @@ class ShiftViewModel(app: Application) : AndroidViewModel(app) {
 
     fun stepHours(delta: Double) {
         val next = (_state.value.editingHours + delta).coerceIn(0.5, 24.0)
-        _state.value = _state.value.copy(editingHours = next)
+        _state.value = _state.value.copy(editingHours = roundHours(next))
     }
 
     /** Хелпер для редактора: часы по введённому интервалу (null — пока невалидно). */
     fun previewHours(): Double? = intervalHours(_state.value.editingStartTime, _state.value.editingEndTime)
 
     fun setRate(rate: Double) {
-        _state.value = _state.value.copy(editingRate = rate.coerceAtLeast(0.0))
+        _state.value = _state.value.copy(editingRate = roundMoney(rate.coerceAtLeast(0.0)))
     }
 
     fun setNote(note: String) {

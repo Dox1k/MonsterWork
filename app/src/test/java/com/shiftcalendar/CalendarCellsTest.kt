@@ -47,17 +47,19 @@ class CalendarCellsTest {
 
     @Test
     fun `денежный формат разделяет разряды и показывает копейки`() {
-        assertEquals("500 ₽", formatMoney(500.0))
-        assertEquals("12 000 ₽", formatMoney(12000.0))
-        assertEquals("7 500 ₽", formatMoney(7500.0))
-        assertEquals("1 250,50 ₽", formatMoney(1250.5))
+        // Решение 14-Б: разряды через неразрывный пробел, копейки всегда, знак «Р».
+        assertEquals("500.00Р", formatMoney(500.0))
+        assertEquals("12\u00A0000.00Р", formatMoney(12000.0))
+        assertEquals("7\u00A0500.00Р", formatMoney(7500.0))
+        assertEquals("1\u00A0250.50Р", formatMoney(1250.5))
     }
 
     @Test
-    fun `часы показываются целыми или с запятой`() {
-        assertEquals("12 ч", formatHours(12.0))
-        assertEquals("8 ч", formatHours(8.0))
-        assertTrue(formatHours(7.5).contains("7"))
+    fun `часы показываются целыми или с двумя знаками`() {
+        // Решение 17-А: целые — «12ч», дробные — «7.50ч» (без пробела перед «ч»).
+        assertEquals("12ч", formatHours(12.0))
+        assertEquals("8ч", formatHours(8.0))
+        assertEquals("7.50ч", formatHours(7.5))
     }
 
     @Test

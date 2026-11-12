@@ -89,7 +89,6 @@ object MultiShift {
 
 /**
  * Порядковый номер смены среди смен своего дня (0 — первая по времени).
- * Нужен для стабильного цвета: первая смена дня — слот 0, вторая — 1 и т.д.
  * Сравнение идёт по (время начала, id) — как в [MultiShift.ordered], но без
  * пересортировки всего списка на каждую ячейку сетки.
  */
@@ -136,4 +135,72 @@ fun summarizeDay(shifts: List<Shift>): DaySummary {
         hours = MultiShift.totalHours(ordered),
         dayOff = MultiShift.hasDayOff(ordered)
     )
+}
+
+// ---------- «Первый профиль» дня (решения 15-Б и 16-Б) ----------
+
+/**
+ * Часть дня, стоящая за первым профилем (решение клиента 15-Б).
+ *
+ * Порядок в [MultiShift.ordered] — сначала по времени начала, потом по id, а
+ * смены паттернов одного дня записываются циклом слева направо, поэтому первая
+ * смена дня и есть «профиль 1». Выходные времени не имеют и уходят в конец
+ * списка — в своём дне они всё равно остаются единственной сменой.
+ */
+fun firstProfileShift(shifts: List<Shift>): Shift? = MultiShift.ordered(shifts).firstOrNull()
+
+/**
+ * Время смены для клетки дня: только по первому профилю, и только если он
+ * рабочий. Если профиль 1 — выходной, время не показываем даже когда второй
+ * профиль в этот день работает (решение 15-Б).
+ */
+fun dayTimeLabel(shifts: List<Shift>): String? {
+    val first = firstProfileShift(shifts) ?: return null
+    val span = MultiShift.shiftSpan(first) ?: return null
+    if (first.isDayOff || span.first == Int.MAX_VALUE) return null
+    val start = first.startTime ?: return null
+    val end = first.endTime ?: return null
+    return "$start–$end"
+}
+
+/**
+ * Кто рисует банки монстра в этот день (решение 16-Б): первый профиль дня.
+ * Если у первого профиля выходной, банки не идут — даже когда второй профиль
+ * в этот день работает.
+ */
+fun dayBanksShift(shifts: List<Shift>): Shift? {
+    val first = firstProfileShift(shifts) ?: return null
+    return first.takeIf { !it.isDayOff && !it.startTime.isNullOrEmpty() }
+}
+
+/**
+ * Пары «профиль дня» для раскраски квадрата (решение 12-Б): верхний цвет —
+ * первый профиль, нижний — второй. Возвращает пару профилей; второй равен
+ * первому (или null), когда профиль в дне один.
+ */
+fun dayProfilePair(shifts: List<Shift>): Pair<Long, Long> {
+    val ordered = MultiShift.ordered(shifts)
+    val first = ordered.firstOrNull()?.profileId ?: 0L
+    val second = ordered.drop(1).firstOrNull { it.profileId != first }?.profileId ?: first
+    return first to second
+}
+
+/** Рабочий ли день у смен, отмеченных профилем [profileId]. */
+fun isWorkDayForProfile(shifts: List<Shift>, profileId: Long): Boolean =
+    shifts.any { it.profileId == profileId && !it.isDayOff }
+
+/**
+ * Цвет половины квадрата: рабочие дни профиля рисуются его рабочим цветом,
+ * выходные — цветом выходного; дней профиля в дне нет — цвета нет.
+ */
+fun halfColorForProfile(
+    shifts: List<Shift>,
+    profileId: Long,
+    workColor: Long?,
+    dayOffColor: Long?
+): Long? {
+    if (profileId <= 0L) return null
+    val own = shifts.filter { it.profileId == profileId }
+    if (own.isEmpty()) return null
+    return if (own.any { !it.isDayOff }) workColor else dayOffColor
 }

@@ -173,16 +173,18 @@ fun DayEditor(
                             label = "Начало",
                             value = state.editingStartTime,
                             onChange = onStartText,
-                            onPick = onPickStart,
+                            onPick = { onPickStart(state.editingStartTime) },
                             onNudge = onNudgeStart,
+                            focusKey = "start-" + state.editorGeneration,
                             modifier = Modifier.weight(1f)
                         )
                         TimeField(
                             label = "Конец",
                             value = state.editingEndTime,
                             onChange = onEndText,
-                            onPick = onPickEnd,
+                            onPick = { onPickEnd(state.editingEndTime) },
                             onNudge = onNudgeEnd,
+                            focusKey = "end-" + state.editorGeneration,
                             modifier = Modifier.weight(1f)
                         )
                     }
@@ -461,120 +463,9 @@ private fun dayTitle(date: LocalDate): String {
 }
 
 /**
- * Поле времени (решение клиента В12): квадрат [ЧЧ], некликабельное «:»,
- * квадрат [ММ]. Часы и минуты — два независимых цифровых поля; после ввода
- * двух цифр часов фокус сам переходит на минуты. Кнопки −/+ убраны совсем,
- * диалог-часики «⏱» оставлен справа.
+ * Поле времени живёт в общем модуле [com.shiftcalendar.ui.TimeField] (решение 11-Б):
+ * одинаковые правила ввода в редакторе дня и в конструкторе паттерна.
  */
-@Composable
-private fun TimeField(
-    label: String,
-    value: String,
-    onChange: (String) -> Unit,
-    onPick: (String) -> Unit,
-    onNudge: (Int) -> Unit,
-    modifier: Modifier = Modifier
-) {
-    val context = LocalContext.current
-    val parsed = parseTimeOrNull(value)
-    // Разделяем «HH:mm» на две части; пустые части — пустой ввод.
-    val hh = value.take(2).filter { it.isDigit() }
-    val mm = value.drop(3).take(2).filter { it.isDigit() }
-    // Промежуточные состояния не считаем ошибкой: ругаемся только на оба заполненных, но кривых.
-    val invalid = parsed == null && (hh.length == 2 && mm.length == 2)
-
-    fun clampPart(raw: String, max: Int): String {
-        var digits = raw.filter { it.isDigit() }
-        // Поле можно дописывать без стирания: при переполнении берём последние 2 цифры.
-        if (digits.length > 2) digits = digits.takeLast(2)
-        return when {
-            digits.length == 2 -> digits.toInt().coerceIn(0, max).toString().padStart(2, '0')
-            else -> digits
-        }
-    }
-
-    fun compose(h: String, m: String): String =
-        if (h.isEmpty() && m.isEmpty()) "" else "%s:%s".format(h.padStart(2, '0'), m.padStart(2, '0'))
-
-    Column(modifier) {
-        Row(verticalAlignment = Alignment.CenterVertically) {
-            Text(label.uppercase(), fontSize = 10.sp, color = Palette.Muted, fontWeight = FontWeight.SemiBold, modifier = Modifier.weight(1f))
-            Text(
-                "⏱", fontSize = 15.sp, color = Palette.Muted,
-                modifier = Modifier
-                    .clip(CircleShape)
-                    .clickable {
-                        TimePickerDialog(
-                            context,
-                            { _, h, m -> onPick("%02d:%02d".format(h, m)) },
-                            parsed?.hour ?: 8, parsed?.minute ?: 0, true
-                        ).show()
-                    }
-                    .padding(6.dp)
-            )
-        }
-        Spacer(Modifier.height(4.dp))
-        Row(verticalAlignment = Alignment.CenterVertically) {
-            // ЧЧ
-            OutlinedTextField(
-                value = hh,
-                onValueChange = { raw -> onChange(compose(clampPart(raw, 23), mm)) },
-                placeholder = { Text("ЧЧ", color = Palette.Muted, fontSize = 15.sp) },
-                isError = invalid,
-                keyboardOptions = KeyboardOptions(keyboardType = KeyboardType.NumberPassword),
-                singleLine = true,
-                textStyle = androidx.compose.ui.text.TextStyle(
-                    fontSize = 17.sp, fontWeight = FontWeight.Bold,
-                    color = Palette.Ink, textAlign = androidx.compose.ui.text.style.TextAlign.Center
-                ),
-                colors = OutlinedTextFieldDefaults.colors(
-                    focusedBorderColor = Palette.ShiftRed,
-                    unfocusedBorderColor = Palette.Outline,
-                    errorBorderColor = Palette.ShiftRed,
-                    focusedTextColor = Palette.Ink,
-                    unfocusedTextColor = Palette.Ink
-                ),
-                modifier = Modifier.weight(1f)
-            )
-            // Некликабельное двоеточие — просто текст между квадратами.
-            Text(
-                ":",
-                fontSize = 19.sp,
-                fontWeight = FontWeight.Bold,
-                color = Palette.Muted,
-                modifier = Modifier.padding(horizontal = 6.dp)
-            )
-            // ММ
-            OutlinedTextField(
-                value = mm,
-                onValueChange = { raw -> onChange(compose(hh, clampPart(raw, 59))) },
-                placeholder = { Text("ММ", color = Palette.Muted, fontSize = 15.sp) },
-                isError = invalid,
-                keyboardOptions = KeyboardOptions(keyboardType = KeyboardType.NumberPassword),
-                singleLine = true,
-                textStyle = androidx.compose.ui.text.TextStyle(
-                    fontSize = 17.sp, fontWeight = FontWeight.Bold,
-                    color = Palette.Ink, textAlign = androidx.compose.ui.text.style.TextAlign.Center
-                ),
-                colors = OutlinedTextFieldDefaults.colors(
-                    focusedBorderColor = Palette.ShiftRed,
-                    unfocusedBorderColor = Palette.Outline,
-                    errorBorderColor = Palette.ShiftRed,
-                    focusedTextColor = Palette.Ink,
-                    unfocusedTextColor = Palette.Ink
-                ),
-                modifier = Modifier.weight(1f)
-            )
-        }
-    }
-}
-
-@Composable
-private fun TimeFieldLabel(text: String) {
-    Text(text.uppercase(), fontSize = 10.sp, color = Palette.Muted, fontWeight = FontWeight.SemiBold)
-}
-
-/** Чип выбора: выбран — Ink-фон/OnInk-текст; не выбран — CardBg. Никаких белых полей. */
 @Composable
 private fun ChipChoice(label: String, selected: Boolean, modifier: Modifier, onClick: () -> Unit) {
     Box(
@@ -596,20 +487,5 @@ private fun ChipChoice(label: String, selected: Boolean, modifier: Modifier, onC
             fontWeight = if (selected) FontWeight.SemiBold else FontWeight.Normal,
             color = if (selected) Palette.OnInk else Palette.Ink
         )
-    }
-}
-
-@Composable
-private fun NudgeButton(label: String, modifier: Modifier = Modifier, onClick: () -> Unit) {
-    Box(
-        modifier
-            .height(30.dp)
-            .clip(RoundedCornerShape(8.dp))
-            .background(Palette.CardBg)
-            .border(1.dp, Palette.Outline, RoundedCornerShape(8.dp))
-            .clickable(onClick = onClick),
-        contentAlignment = Alignment.Center
-    ) {
-        Text(label, fontSize = 12.sp, color = Palette.Ink)
     }
 }

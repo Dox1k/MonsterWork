@@ -26,6 +26,7 @@ import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.clip
+import androidx.compose.ui.graphics.Brush
 import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.text.style.TextAlign
@@ -66,7 +67,8 @@ fun MonthScreen(
                 .fillMaxSize()
                 .verticalScroll(rememberScrollState())
         ) {
-            // Живая карточка «ИДЁТ СМЕНА» — между лентой месяцев и сеткой, как в 7f52463.
+            // Живая карточка «ИДЁТ СМЕНА» и банки — по первому профилю дня (решение 16-Б).
+            val todayShifts = shiftsOnDate(state.months, state.now.toLocalDate())
             currentShift(state.months, state.now)?.let { running ->
                 BankProgressCard(
                     shift = running,
@@ -78,9 +80,13 @@ fun MonthScreen(
                 )
             }
             CalendarGrid(state, onOpenDay, onPrevMonth, onNextMonth)
-            // Банки текущей смены: 1 банка = час без перерыва. Показывается всегда (5-Б):
+            // Банки текущей смены: 1 банка = час без перерыва. Считаем по смене
+            // первого профиля сегодняшнего дня (решения 16-Б, 7-Б). Показывается всегда (5-Б):
             // нет смены — пустой блок с подсказкой.
-            MonsterBanks(shift = currentShift(state.months, state.now), now = state.now)
+            MonsterBanks(
+                shift = dayBanksShift(todayShifts) ?: currentShift(state.months, state.now),
+                now = state.now
+            )
             LegendRow(state)
             // Статистика за выбранный месяц
             state.current?.let { cur ->
@@ -326,19 +332,15 @@ private fun DayCell(
     val ordered = MultiShift.ordered(dayShifts)
     val work = ordered.filter { !it.isDayOff }
     val dayOff = ordered.any { it.isDayOff }
-    // Цвет дня: свой профиль — его цвета; иначе слот первой смены / зелёный.
-    val profColor: Color? = ordered.firstNotNullOfOrNull { profileColorFor(state, it) }
-    val base: Color? = when {
-        ordered.isEmpty() -> null
-        dayOff -> profColor ?: Palette.DayOffGreen
-        else -> profColor ?: ShiftSlotColors.colorFor(0)
-    }
     val summary = summarizeDay(ordered)
     // Сколько смен в работе прямо сейчас — только у сегодняшней ячейки.
     val runningNow = if (isToday) activeShiftsAt(ordered, state.now) else 0
-    val bg = base
-    // Решение клиента (6-А): квадрат одного размера, меняется только цвет.
-    // Сплошная заливка цветом смены/выходного, как в прошлой версии; число — белое.
+    // Решение клиента (6-А, 12-Б): квадрат одного размера; если в дне сошлись
+    // два профиля — верхняя половина его цвета, нижняя — второго профиля.
+    val split = daySplitColors(state, ordered)
+    val cellBg: Brush? = split?.let {
+        Brush.verticalGradient(0.5f to it.first, 0.5f to it.second)
+    }
     Box(
         Modifier
             .padding(1.dp)
@@ -346,8 +348,8 @@ private fun DayCell(
             .clip(RoundedCornerShape(8.dp))
             .background(
                 when {
-                    ordered.isEmpty() -> Palette.WeekendTint
-                    else -> bg ?: Palette.CardBg
+                    ordered.isEmpty() -> Brush.verticalGradient(listOf(Palette.WeekendTint, Palette.WeekendTint))
+                    else -> cellBg ?: Brush.verticalGradient(listOf(Palette.CardBg, Palette.CardBg))
                 }
             )
             .border(
@@ -379,10 +381,10 @@ private fun DayCell(
                 dayOff && summary.workCount == 0 ->
                     Text("вых", fontSize = 7.sp, color = Color.White.copy(alpha = 0.9f))
                 summary.workCount == 1 && !dayOff -> {
-                    val only = work.first()
-                    if (only.startTime != null) {
+                    // Время дня — только по первому профилю (решение 15-Б).
+                    dayTimeLabel(ordered)?.let { label ->
                         Text(
-                            "${only.startTime}–${only.endTime ?: "??"}",
+                            label,
                             fontSize = 7.sp,
                             color = Color.White.copy(alpha = 0.9f),
                             maxLines = 1
@@ -581,10 +583,27 @@ private fun TotalItem(label: String, value: String, accent: Color = Palette.Ink)
     }
 }
 
-/** Цвет дня по профилю смены: работы/выходной; null — стандартные цвета темы. */
-private fun profileColorFor(state: UiState, shift: Shift?): Color? {
-    val pid = shift?.profileId ?: return null
+/** Цвет профиля [pid] в этом дне: рабочий — workColor, только выходные — dayOffColor. */
+@Composable
+private fun profileHalfColor(state: UiState, shifts: List<Shift>, pid: Long): Color? {
     if (pid <= 0L) return null
+    val own = shifts.filter { it.profileId == pid }
+    if (own.isEmpty()) return null
     val p = state.profiles.firstOrNull { it.id == pid } ?: return null
-    return Color(if (shift.isDayOff) p.dayOffColor else p.workColor)
+    return Color(if (own.any { !it.isDayOff }) p.workColor else p.dayOffColor)
+}
+
+/**
+ * Пара цветов «верх/низ» квадрата дня (решение 12-Б): если в дне сошлись два
+ * разных профиля — верх берёт цвет первого, низ — второго. Один профиль —
+ * оба цвета совпадают (квадрат сплошной). Выходной без профиля — null.
+ */
+@Composable
+private fun daySplitColors(state: UiState, shifts: List<Shift>): Pair<Color, Color>? {
+    val (firstId, secondId) = dayProfilePair(shifts)
+    val top = profileHalfColor(state, shifts, firstId)
+        ?: if (shifts.any { it.isDayOff }) Palette.DayOffGreen else null
+    val bottom = if (secondId != firstId) profileHalfColor(state, shifts, secondId) else top
+    val resolvedTop = top ?: return null
+    return resolvedTop to (bottom ?: resolvedTop)
 }

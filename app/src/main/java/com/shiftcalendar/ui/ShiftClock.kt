@@ -5,6 +5,7 @@ import com.shiftcalendar.model.*
 import java.time.LocalDate
 import java.time.LocalDateTime
 import java.time.LocalTime
+import java.time.YearMonth
 
 /**
  * Логика «банок» и прогресса. Здесь только чистые функции без Android/Compose —
@@ -92,6 +93,12 @@ fun shiftProgress(shift: Shift, now: LocalDateTime = LocalDateTime.now()): Float
 fun currentShift(months: List<MonthSummary>, now: LocalDateTime): Shift? {
     val all = months.flatMap { it.shifts }.filter { !it.isDayOff && it.startTime != null }
     return all.firstOrNull { shiftProgress(it, now) > 0f && shiftProgress(it, now) < 1f }
+}
+
+/** Смены конкретного дня (по дате ISO). Пустой список — смен нет. */
+fun shiftsOnDate(months: List<MonthSummary>, date: LocalDate): List<Shift> {
+    val iso = date.iso()
+    return months.firstOrNull { YearMonth.from(date) == it.ym }?.shifts?.filter { it.date == iso } ?: emptyList()
 }
 
 /**

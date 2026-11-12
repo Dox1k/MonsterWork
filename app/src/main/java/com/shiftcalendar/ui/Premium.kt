@@ -1,6 +1,9 @@
 package com.shiftcalendar.ui
 
 import com.shiftcalendar.data.Shift
+import com.shiftcalendar.model.moneyText
+import com.shiftcalendar.model.parseTimeOrNull
+import com.shiftcalendar.model.roundMoney
 import java.time.Duration
 import java.time.LocalTime
 
@@ -21,6 +24,47 @@ fun formatPercent(value: Double): String {
 /** Обратное преобразование текста поля в проценты; мусор -> null. */
 fun parsePercent(text: String): Double? =
     text.replace(',', '.').trim().takeIf { it.isNotEmpty() }?.toDoubleOrNull()
+
+/**
+ * Как задана надбавка (решение клиента 13-Б): процентом от ставки или
+ * фиксированной суммой за час. Пользователь выбирает один из двух вариантов.
+ */
+enum class PremiumMode {
+    /** Надбавка в процентах: час в окне = ставка × (1 + процент/100). */
+    PERCENT,
+
+    /** Надбавка рублями за час: час в окне = ставка + сумма. */
+    AMOUNT
+}
+
+/**
+ * Настройка надбавки целиком: как считается ([mode]), величина ([percent] или
+ * [amount]), с какого времени начисляется ([threshold]) и учитывать ли
+ * перерыв, попавший после начала надбавки ([breakCountsInPremium]).
+ *
+ * Название ([title]) — пользовательское: «Ночная», «Вечерняя» и т.п.
+ * Окно надбавки теперь одностороннее — от [threshold] до конца смены
+ * (решение 13-Б); прежняя «Надбавка до» больше не нужна.
+ */
+data class PremiumSettings(
+    val title: String = "Ночная надбавка",
+    val mode: PremiumMode = PremiumMode.PERCENT,
+    val percent: Double = 20.0,
+    val amount: Double = 0.0,
+    val threshold: String = "22:00",
+    val breakCountsInPremium: Boolean = true
+) {
+    /** Надбавка выключена: ни процента, ни суммы. */
+    val isOff: Boolean get() = percent <= 0.0 && amount <= 0.0
+
+    /** Подпись режима для итогов: «30%» или «67Р/ч». */
+    val rateLegend: String
+        get() = when {
+            mode == PremiumMode.PERCENT && percent > 0.0 -> "${formatPercent(percent)}%"
+            mode == PremiumMode.AMOUNT && amount > 0.0 -> "${moneyText(amount)}/ч"
+            else -> "без надбавки"
+        }
+}
 
 /** Надбавочная ставка: базовая ставка + процент от неё. 100 ₽/ч + 20% = 120 ₽/ч. */
 fun premiumRate(rate: Double, percent: Double): Double = rate * (1.0 + percent / 100.0)
@@ -203,3 +247,102 @@ fun shiftEarningsBreakdown(
     val premium = rate * (1.0 + percent / 100.0) * split.premiumMinutes / 60.0
     return Triple(base, premium, base + premium)
 }
+
+// ---------- Надбавка, заданная пользователем (решение 13-Б) ----------
+
+/**
+ * Надбавочная ставка за час: процент от ставки ИЛИ фиксированная сумма к ней.
+ * Пример клиента: ставка 270 ₽/ч и надбавка 67 ₽ → час в окне стоит 337 ₽.
+ */
+fun premiumHourRate(rate: Double, settings: PremiumSettings): Double = when (settings.mode) {
+    PremiumMode.PERCENT -> rate * (1.0 + settings.percent / 100.0)
+    PremiumMode.AMOUNT -> rate + settings.amount
+}
+
+/**
+ * Границы окна надбавки в минутах от начала смены.
+ *
+ * Окно одностороннее: «с 22:00 до конца смены». Для смены 16:00–01:00 начало
+ * надбавки — на 360-й минуте (22:00); для смены 18:00–02:00 — тоже 360.
+ * Если время начала не попадает внутрь смены, надбавки нет (окно пустое).
+ */
+fun premiumWindow(
+    start: LocalTime,
+    end: LocalTime,
+    threshold: LocalTime
+): Pair<Long, Long>? {
+    val gross = intervalMinutes(start, end)
+    if (gross <= 0L) return null
+    var offset = Duration.between(start, threshold).toMinutes()
+    if (offset < 0L) offset += 1440
+    if (offset > gross) return null
+    return offset to gross
+}
+
+/**
+ * Раскладка смены на базовые и надбавочные минуты с односторонним окном
+ * и правилом перерыва «считать со времени начала надбавки» (решение 13-Б).
+ *
+ * Правила:
+ *  - интервал смены — полуинтервал [start, end) с переходом через полночь;
+ *  - минуты после [threshold] (по шкале смены) — надбавочные;
+ *  - при [breakCountsInPremium] перерыв вычитается С КОНЦА смены: он съедает
+ *    сначала надбавочные минуты и только потом базовые. Так надбавка не
+ *    начисляется за час обеда, попавший после начала надбавки;
+ *  - при выключенном правиле перерыв вычитается с начала смены (базовые минуты).
+ *
+ * Пример клиента: ставка 270 ₽, надбавка 30%, смена 16:00–01:00 (9 ч), обед
+ * 1 час в 23:00 → 6 базовых ч (1620 ₽) + 2 надбавочных ч (702 ₽) = 2322 ₽.
+ */
+fun premiumSplitByThreshold(
+    start: LocalTime,
+    end: LocalTime,
+    threshold: LocalTime,
+    breakMinutes: Int = 0,
+    breakCountsInPremium: Boolean = true
+): PremiumSplit {
+    val window = premiumWindow(start, end, threshold) ?: return PremiumSplit(0L, 0L)
+    val (premiumStart, gross) = window
+
+    val cut = breakMinutes.toLong().coerceIn(0L, gross)
+    // Базовые минуты идут первыми: [0, premiumStart), затем надбавочные.
+    val baseGross = premiumStart
+    var cutPremium = 0L
+    if (breakCountsInPremium) {
+        val beyondThreshold = gross - premiumStart
+        cutPremium = cut.coerceAtMost(beyondThreshold)
+    }
+    val cutBase = cut - cutPremium
+    return PremiumSplit(
+        baseMinutes = (baseGross - cutBase).coerceAtLeast(0L),
+        premiumMinutes = (premiumStart - cutPremium).coerceAtLeast(0L)
+    )
+}
+
+/**
+ * Заработок смены с надбавкой пользователя: базовая ставка за часы до начала
+ * надбавки плюс надбавочная ставка за часы внутри окна.
+ *
+ * Формула клиента: часы до надбавки × ставка + (часы с начала надбавки −
+ * перерыв после её начала) × (ставка + надбавка).
+ */
+fun shiftEarningsWithPremium(
+    rate: Double,
+    start: LocalTime,
+    end: LocalTime,
+    settings: PremiumSettings,
+    breakMinutes: Int = 0
+): Double {
+    if (rate < 0.0) return 0.0
+    val gross = intervalMinutes(start, end)
+    if (gross <= 0L) return 0.0
+    val hours = premiumHourRate(rate, settings)
+    // Надбавка выключена (или ставка нулевая) — считаем просто по часам.
+    if (settings.isOff) return rate * (gross - breakMinutes.coerceIn(0, gross.toInt())) / 60.0
+    val split = premiumSplitByThreshold(start, end, parseTimeOrNull(settings.threshold)
+        ?: LocalTime.of(22, 0), breakMinutes, settings.breakCountsInPremium)
+    val base = rate * split.baseMinutes / 60.0
+    val premium = hours * split.premiumMinutes / 60.0
+    return roundMoney(base + premium)
+}
+

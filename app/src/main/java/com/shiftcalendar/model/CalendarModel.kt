@@ -80,19 +80,35 @@ fun shiftTime(value: String?, deltaMinutes: Int, fallback: String): String {
     return "%02d:%02d".format(next.hour, next.minute)
 }
 
-fun formatMoney(value: Double): String {
-    val whole = value.toLong()
-    val frac = Math.round((value - whole) * 100).toInt()
-    val wholeStr = whole.toString().reversed().chunked(3).joinToString(" ").reversed()
-    return if (frac == 0) "$wholeStr ₽" else "$wholeStr,${"%02d".format(frac)} ₽"
-}
+/**
+ * Сумма в формате клиента (решение 14-Б): всегда две копейки и «Р» без пробела —
+ * 15.17 → «15.17Р», 1067 → «1 067.00Р». Разделитель разрядов — узкий пробел,
+ * чтобы «1 800.00Р» не разъезжалось на две строки в узких ячейках.
+ * Считает [moneyText] из TimeInput.kt — единая точка округления до копеек.
+ */
+fun formatMoney(value: Double): String = moneyText(value)
 
-fun formatHours(value: Double): String {
-    return if (value % 1.0 == 0.0) "${value.toInt()} ч" else "$value ч".replace('.', ',')
-}
+/**
+ * Часы (системная локаль ru-RU даёт точку через общий формат):
+ * целые — «12ч», дробные — «7.50ч» (две цифры, как и деньги).
+ */
+fun formatHours(value: Double): String = hoursText(value)
 
 /** Полное имя месяца и год: «Октябрь 2026». */
 fun monthTitle(ym: YearMonth): String = "${MONTH_NAMES[ym.monthValue - 1]} ${ym.year}"
+
+// ---------- Округление денег и часов (решение 17-А) ----------
+
+/**
+ * Часы — до сотых, но «ровные» часы остаются целыми: 8.0 → 8.0, 7.004 → 7.0,
+ * 8.333 → 8.33. Нужно, чтобы смена 08:00–16:00 показывала «8ч», а не «8.0000001ч».
+ * Деньги округляет [roundMoney] из TimeInput.kt — одна точка округления на всё.
+ */
+fun roundHours(value: Double): Double {
+    val hundredths = Math.round(value * 100.0) / 100.0
+    return if (Math.abs(hundredths - Math.round(hundredths)) < 1e-9) Math.round(hundredths).toDouble()
+    else hundredths
+}
 
 /**
  * Ячейки сетки месяца: пустые места до первого числа (для выравнивания

@@ -53,6 +53,10 @@ fun PatternScreen(
     onThreshold: (String) -> Unit,
     onNightEnd: (String) -> Unit,
     onPercent: (Double) -> Unit,
+    onPremiumTitle: (String) -> Unit,
+    onPremiumMode: (PremiumMode) -> Unit,
+    onPremiumAmount: (Double) -> Unit,
+    onPremiumBreakAfterStart: (Boolean) -> Unit,
     onUntil: (LocalDate) -> Unit,
     onAlign: (Boolean) -> Unit,
     onPreview: () -> Unit,
@@ -227,6 +231,32 @@ fun PatternScreen(
                 }
             }
             Spacer(Modifier.height(8.dp))
+            // Надбавка задаётся пользователем (решение 13-Б): название, способ
+            // (процент или сумма за час) и учёт перерыва после начала надбавки.
+            PremiumTitleField(value = state.premiumTitle, onChange = onPremiumTitle)
+            Spacer(Modifier.height(6.dp))
+            Row(horizontalArrangement = Arrangement.spacedBy(6.dp)) {
+                StepChoice("Процент", state.premiumMode == PremiumMode.PERCENT, Modifier.weight(1f)) {
+                    onPremiumMode(PremiumMode.PERCENT)
+                }
+                StepChoice("Сумма ₽/ч", state.premiumMode == PremiumMode.AMOUNT, Modifier.weight(1f)) {
+                    onPremiumMode(PremiumMode.AMOUNT)
+                }
+            }
+            Spacer(Modifier.height(6.dp))
+            if (state.premiumMode == PremiumMode.PERCENT) {
+                PercentField(value = state.nightPremiumPercent, onChange = onPercent)
+            } else {
+                AmountField(value = state.premiumAmount, onChange = onPremiumAmount)
+            }
+            Spacer(Modifier.height(6.dp))
+            ToggleRow(
+                title = "Перерыв съедает надбавку",
+                subtitle = "Перерыв после начала надбавки вычитается из надбавочных часов",
+                checked = state.premiumBreakAfterStart,
+                onChecked = onPremiumBreakAfterStart
+            )
+            Spacer(Modifier.height(8.dp))
             // Конец окна надбавки
             Row(
                 Modifier
@@ -253,15 +283,6 @@ fun PatternScreen(
                     TimePickerDialog(context, { _, h, m -> onNightEnd("%02d:%02d".format(h, m)); showNightEndPicker = false }, state.nightEnd.take(2).toIntOrNull() ?: 6, state.nightEnd.drop(3).take(2).toIntOrNull() ?: 0, true).show()
                 }
             }
-            Spacer(Modifier.height(8.dp))
-            PercentField(value = state.nightPremiumPercent, onChange = onPercent)
-            Spacer(Modifier.height(6.dp))
-            ToggleRow(
-                title = "Без надбавки",
-                subtitle = "Расчёт ведётся без доплаты",
-                checked = state.nightPremiumPercent == 0.0,
-                onChecked = { if (it) onPercent(0.0) else onPercent(20.0) }
-            )
             Spacer(Modifier.height(8.dp))
             DateRow("Проставить до", state.patternUntil) { onUntil(it) }
 
@@ -630,19 +651,23 @@ private fun PatternStepRow(
             }
             if (!step.isDayOff) {
                 Spacer(Modifier.height(10.dp))
-                Row(horizontalArrangement = Arrangement.spacedBy(8.dp), verticalAlignment = Alignment.CenterVertically) {
-                    StepTimeField(
+                Row(horizontalArrangement = Arrangement.spacedBy(8.dp), verticalAlignment = Alignment.Top) {
+                    TimeField(
                         label = "Начало",
                         value = timeFieldText(step.startTime ?: step.start),
                         onChange = onStartText,
+                        onPick = { onChange(step.copy(startTime = step.startTime ?: step.start, endTime = step.endTime ?: step.end)) },
                         onNudge = onNudgeStart,
+                        invalid = intervalHours(step.start, step.end) == null && step.endTime != null,
                         modifier = Modifier.weight(1f)
                     )
-                    StepTimeField(
+                    TimeField(
                         label = "Конец",
                         value = timeFieldText(step.endTime ?: step.end),
                         onChange = onEndText,
+                        onPick = { onChange(step.copy(startTime = step.startTime ?: step.start, endTime = step.endTime ?: step.end)) },
                         onNudge = onNudgeEnd,
+                        invalid = intervalHours(step.start, step.end) == null && step.endTime != null,
                         modifier = Modifier.weight(1f)
                     )
                 }
@@ -700,84 +725,6 @@ private fun PatternStepRow(
 /** Яркость цвета для выбора контрастного текста (без зависимости от graphics.IColor). */
 private fun Color.luminanceCompat(): Float =
     (0.2126f * red + 0.7152f * green + 0.0722f * blue)
-
-/** Время одного шага паттерна: «ЧЧ:ММ» + −/+30 мин; вся карточка уже кликабельна. */
-@Composable
-private fun StepTimeField(
-    label: String,
-    value: String,
-    onChange: (String) -> Unit,
-    onNudge: (Int) -> Unit,
-    modifier: Modifier = Modifier
-) {
-    val context = LocalContext.current
-    val parsed = parseTimeOrNull(value)
-    val valid = parsed != null
-    Column(modifier) {
-        Text(label.uppercase(), fontSize = 10.sp, color = Palette.Muted, fontWeight = FontWeight.SemiBold)
-        Spacer(Modifier.height(4.dp))
-        OutlinedTextField(
-            value = value,
-            onValueChange = onChange,
-            placeholder = { Text("ЧЧ:ММ", color = Palette.Muted) },
-            isError = !valid,
-            keyboardOptions = KeyboardOptions(keyboardType = KeyboardType.NumberPassword),
-            singleLine = true,
-            textStyle = androidx.compose.ui.text.TextStyle(
-                fontSize = 17.sp,
-                fontWeight = FontWeight.Bold,
-                color = Palette.Ink
-            ),
-            trailingIcon = {
-                Text(
-                    "⏱",
-                    fontSize = 15.sp,
-                    color = Palette.Muted,
-                    modifier = Modifier
-                        .clip(CircleShape)
-                        .clickable {
-                            TimePickerDialog(
-                                context,
-                                { _, h, m -> onChange("%02d:%02d".format(h, m)) },
-                                parsed?.hour ?: 8,
-                                parsed?.minute ?: 0,
-                                true
-                            ).show()
-                        }
-                        .padding(6.dp)
-                )
-            },
-            colors = OutlinedTextFieldDefaults.colors(
-                focusedBorderColor = Palette.ShiftRed,
-                unfocusedBorderColor = Palette.Outline,
-                errorBorderColor = Palette.ShiftRed,
-                focusedTextColor = Palette.Ink,
-                unfocusedTextColor = Palette.Ink
-            ),
-            modifier = Modifier.fillMaxWidth()
-        )
-        Spacer(Modifier.height(4.dp))
-        Row(horizontalArrangement = Arrangement.spacedBy(6.dp)) {
-            StepNudge("−30", Modifier.weight(1f)) { onNudge(-30) }
-            StepNudge("+30", Modifier.weight(1f)) { onNudge(30) }
-        }
-    }
-}
-
-@Composable
-private fun StepNudge(label: String, modifier: Modifier = Modifier, onClick: () -> Unit) {
-    Box(
-        modifier
-            .height(28.dp)
-            .clip(RoundedCornerShape(8.dp))
-            .background(Palette.CardBg)
-            .border(1.dp, Palette.Outline, RoundedCornerShape(8.dp))
-            .clickable(onClick = onClick),
-        contentAlignment = Alignment.Center
-    ) {
-        Text(label, fontSize = 11.sp, color = Palette.Ink)
-    }
-}
 
 @Composable
 private fun StepChoice(label: String, selected: Boolean, modifier: Modifier, onClick: () -> Unit) {
@@ -917,6 +864,55 @@ private fun ToggleRow(
             )
         )
     }
+}
+
+/** Название надбавки (решение 13-Б): свободный текст, до 40 знаков. */
+@Composable
+private fun PremiumTitleField(value: String, onChange: (String) -> Unit) {
+    OutlinedTextField(
+        value = value,
+        onValueChange = { onChange(it.take(40)) },
+        label = { Text("Название надбавки", color = Palette.Muted) },
+        placeholder = { Text("например Ночная надбавка", color = Palette.Muted) },
+        singleLine = true,
+        textStyle = androidx.compose.ui.text.TextStyle(fontSize = 14.sp, color = Palette.Ink),
+        colors = OutlinedTextFieldDefaults.colors(
+            focusedBorderColor = Palette.ShiftRed,
+            unfocusedBorderColor = Palette.Outline,
+            focusedTextColor = Palette.Ink,
+            unfocusedTextColor = Palette.Ink
+        ),
+        modifier = Modifier.fillMaxWidth()
+    )
+}
+
+/** Надбавка суммой за час, ₽/ч (решение 13-Б): 0–100 000. */
+@Composable
+private fun AmountField(value: Double, onChange: (Double) -> Unit) {
+    var text by remember(value) {
+        mutableStateOf(if (value == 0.0) "" else if (value % 1.0 == 0.0) value.toLong().toString() else value.toString().replace('.', ','))
+    }
+    OutlinedTextField(
+        value = text,
+        onValueChange = { raw ->
+            val cleaned = raw.replace(',', '.').filter { c -> c.isDigit() || c == '.' }.take(7)
+            text = cleaned.replace('.', ',')
+            cleaned.toDoubleOrNull()?.let { if (it in 0.0..100_000.0) onChange(it) }
+        },
+        label = { Text("Надбавка, ₽/час", color = Palette.Muted) },
+        placeholder = { Text("например 50", color = Palette.Muted) },
+        suffix = { Text("₽/ч", color = Palette.Muted, fontSize = 12.sp) },
+        keyboardOptions = KeyboardOptions(keyboardType = KeyboardType.Decimal),
+        singleLine = true,
+        textStyle = androidx.compose.ui.text.TextStyle(fontSize = 14.sp, color = Palette.Ink),
+        colors = OutlinedTextFieldDefaults.colors(
+            focusedBorderColor = Palette.ShiftRed,
+            unfocusedBorderColor = Palette.Outline,
+            focusedTextColor = Palette.Ink,
+            unfocusedTextColor = Palette.Ink
+        ),
+        modifier = Modifier.fillMaxWidth()
+    )
 }
 
 @Composable
