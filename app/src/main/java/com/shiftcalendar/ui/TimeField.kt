@@ -16,7 +16,6 @@ import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.clip
 import androidx.compose.ui.focus.FocusRequester
 import androidx.compose.ui.focus.focusRequester
-import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.graphics.SolidColor
 import androidx.compose.ui.platform.LocalSoftwareKeyboardController
 import androidx.compose.ui.text.TextRange
@@ -29,22 +28,22 @@ import androidx.compose.ui.text.style.TextAlign
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
 import com.shiftcalendar.model.TimeInput
+import com.shiftcalendar.model.TimeParts
+import com.shiftcalendar.model.parseTimeParts
 
 /**
- * Ввод времени квадратами «[ЧЧ]:[ММ]» (решение клиента 11-Б) — общий компонент
- * для редактора дня и конструктора паттерна, чтобы правила ввода были ровно
- * одни и те же.
+ * Поле времени «ЧЧ:ММ», где часы и минуты — два самостоятельных поля.
  *
- * Время пишется только руками, цифрами с клавиатуры: кнопок «−/+» и «0» рядом
- * с полем нет (решение клиента 11-В) — они мешали и путали, кому что двигают.
+ * Чего в поле нет и почему (правки клиента):
+ *  - нет кнопок «−/+» и «0» — время впечатывает только сам пользователь;
+ *  - нет подстановки нулей: стёрли часы — поле часов пустое, а не «00»;
+ *  - нельзя ввести часы больше 24 и минуты больше 60 — такая цифра просто не
+ *    принимается, значение поля остаётся прежним;
+ *  - пустым поле уйти не может: под полем написано, чего не хватает, а экран
+ *    не сохранит смену, пока время не введено до конца.
  *
- * Курсор — это выбранный разряд: 0 — часы, 1 — минуты. Нажатие на квадрат
- * меняет выбранный разряд, двоеточие статично и некликабельно. Цифры вводит
- * невидимая клавиатура ([BasicTextField]), логику переполнения и стирания
- * считает чистое ядро [TimeInput]: 16 + «8» → 18, 22 + «0» → 02, стирание
- * возвращает разряд к 00.
- *
- * @param invalid подсветка ошибки: «ЧЧ:ММ» введено, но интервал некорректен.
+ * @param invalid внешняя подсветка ошибки (например, конец раньше начала).
+ * @param onPartsChanged отдаёт текущие части — экран по ним знает, заполнено ли.
  */
 @Composable
 fun TimeField(
@@ -53,116 +52,136 @@ fun TimeField(
     onChange: (String) -> Unit,
     modifier: Modifier = Modifier,
     invalid: Boolean = false,
-    focusKey: Any? = null
+    focusKey: Any? = null,
+    onPartsChanged: ((TimeParts) -> Unit)? = null
 ) {
-    var active by remember { mutableIntStateOf(0) }
-    val focus = remember { FocusRequester() }
-    val keyboard = LocalSoftwareKeyboardController.current
-
-    // Значение приходит извне уже нормализованным; показываем его как есть,
-    // а курсор ставим в конец, чтобы IME не сбивал наш разряд.
-    var field by remember(focusKey) { mutableStateOf(TextFieldValue(TimeInput.parse(value), TextRange(5))) }
+    var parts by remember(focusKey) { mutableStateOf(parseTimeParts(value)) }
+    // Значение пришло извне: смена дня, копирование смены, выбор профиля.
     LaunchedEffect(value, focusKey) {
-        if (value != field.text) {
-            field = TextFieldValue(TimeInput.parse(value), TextRange(5))
-        }
+        val fresh = parseTimeParts(value)
+        if (fresh != parts) parts = fresh
     }
+    LaunchedEffect(parts, focusKey) { onPartsChanged?.invoke(parts) }
 
-    fun emit(next: String, index: Int) {
-        active = index
-        onChange(next)
-    }
-
-    fun type(digit: Char) {
-        val (next, index) = TimeInput.digit(field.text, active, digit)
-        field = TextFieldValue(next, TextRange(5))
-        emit(next, index)
-    }
-
-    fun erase() {
-        val (next, index) = TimeInput.backspace(field.text, active)
-        field = TextFieldValue(next, TextRange(5))
-        emit(next, index)
-    }
+    val error = parts.validationError()
 
     Column(modifier, verticalArrangement = Arrangement.spacedBy(6.dp)) {
         TimeFieldLabel(label)
-        Box(Modifier.fillMaxWidth()) {
-            Row(
-                Modifier
-                    .fillMaxWidth()
-                    .clip(RoundedCornerShape(10.dp))
-                    .border(
-                        1.dp,
-                        if (invalid) Palette.ShiftRed else Palette.Outline,
-                        RoundedCornerShape(10.dp)
-                    )
-                    .background(Palette.CardBg)
-                    .padding(vertical = 8.dp),
-                horizontalArrangement = Arrangement.Center,
-                verticalAlignment = Alignment.CenterVertically
-            ) {
-                DigitSquare(TimeInput.hourText(field.text), active == 0) {
-                    active = 0
-                    focus.requestFocus()
-                    keyboard?.show()
-                }
-                Text(
-                    ":",
-                    fontSize = 20.sp,
-                    fontWeight = FontWeight.Bold,
-                    color = Palette.Ink,
-                    modifier = Modifier.padding(horizontal = 6.dp)
-                )
-                DigitSquare(TimeInput.minuteText(field.text), active == 1) {
-                    active = 1
-                    focus.requestFocus()
-                    keyboard?.show()
-                }
-            }
-            // Невидимое поле ввода: держит клавиатуру и перехватывает цифры.
-            BasicTextField(
-                value = field,
-                onValueChange = { newValue ->
-                    val clean = newValue.text.filter { it.isDigit() }.take(4)
-                    when {
-                        clean.isEmpty() -> erase()
-                        clean.length >= field.text.filter { it.isDigit() }.length -> type(clean.last())
-                        else -> erase()
-                    }
+        Row(verticalAlignment = Alignment.CenterVertically) {
+            PartField(
+                value = parts.hour,
+                max = TimeInput.MAX_HOUR,
+                hint = "24",
+                invalid = error != null || invalid,
+                onChange = { text ->
+                    val next = parts.copy(hour = text)
+                    parts = next
+                    onChange("${next.hour}:${next.minute}")
                 },
-                keyboardOptions = KeyboardOptions(
-                    keyboardType = KeyboardType.NumberPassword,
-                    imeAction = ImeAction.Done
-                ),
-                cursorBrush = SolidColor(Color.Transparent),
-                textStyle = TextStyle(color = Color.Transparent, fontSize = 1.sp),
-                modifier = Modifier
-                    .matchParentSize()
-                    .focusRequester(focus)
+                modifier = Modifier.width(58.dp)
             )
+            Text(
+                ":",
+                fontSize = 22.sp,
+                fontWeight = FontWeight.Bold,
+                color = Palette.Ink,
+                modifier = Modifier.padding(horizontal = 8.dp)
+            )
+            PartField(
+                value = parts.minute,
+                max = TimeInput.MAX_MINUTE,
+                hint = "60",
+                invalid = error != null || invalid,
+                onChange = { text ->
+                    val next = parts.copy(minute = text)
+                    parts = next
+                    onChange("${next.hour}:${next.minute}")
+                },
+                modifier = Modifier.width(58.dp)
+            )
+        }
+        // Пустое поле не молчит: под ним сказано, чего не хватает.
+        if (error != null) {
+            Text(error, fontSize = 10.sp, color = Palette.ShiftRed)
         }
     }
 }
 
-/** Квадрат одного разряда: выбранный — залит, невыбранный — только обводка. */
+/**
+ * Одно числовое поле на две цифры с жёстким пределом [max]: цифра, от которой
+ * значение перевалило бы за предел, просто не принимается.
+ */
 @Composable
-private fun DigitSquare(text: String, active: Boolean, onClick: () -> Unit) {
+private fun PartField(
+    value: String,
+    max: Int,
+    hint: String,
+    invalid: Boolean,
+    onChange: (String) -> Unit,
+    modifier: Modifier = Modifier
+) {
+    var field by remember { mutableStateOf(TextFieldValue(value, TextRange(value.length))) }
+    val focus = remember { FocusRequester() }
+    val keyboard = LocalSoftwareKeyboardController.current
+
+    // Синхронизация наружу → внутрь: часть могли стереть снаружи или подставить
+    // при копировании смены, поле обязано это показать.
+    LaunchedEffect(value) {
+        if (value != field.text) field = TextFieldValue(value, TextRange(value.length))
+    }
+
     Box(
-        Modifier
-            .size(width = 34.dp, height = 38.dp)
-            .clip(RoundedCornerShape(8.dp))
-            .background(if (active) Palette.Ink else Palette.WeekendTint)
-            .border(1.dp, Palette.Outline, RoundedCornerShape(8.dp))
-            .clickable(onClick = onClick),
+        modifier
+            .height(46.dp)
+            .clip(RoundedCornerShape(10.dp))
+            .background(Palette.CardBg)
+            .border(
+                1.dp,
+                if (invalid) Palette.ShiftRed else Palette.Outline,
+                RoundedCornerShape(10.dp)
+            )
+            .clickable {
+                focus.requestFocus()
+                keyboard?.show()
+            },
         contentAlignment = Alignment.Center
     ) {
-        Text(
-            text,
-            fontSize = 20.sp,
-            fontWeight = FontWeight.Bold,
-            color = if (active) Palette.OnInk else Palette.Ink,
-            textAlign = TextAlign.Center
+        // Подсказка-предел вместо нулей: пока поле пустое, видно «24» и «60».
+        if (field.text.isEmpty()) {
+            Text(hint, fontSize = 20.sp, color = Palette.Muted.copy(alpha = 0.45f))
+        }
+        BasicTextField(
+            value = field,
+            onValueChange = { raw ->
+                val digits = raw.text.filter { it.isDigit() }
+                val next = when {
+                    // Стирание чистит поле целиком: «16» → пусто, а не «10» и не «00».
+                    digits.isEmpty() -> ""
+                    digits.length >= field.text.length -> {
+                        val candidate = (field.text + digits.last()).takeLast(2)
+                        val asNumber = candidate.toIntOrNull()
+                        if (asNumber == null || asNumber > max) field.text else candidate
+                    }
+                    else -> ""
+                }
+                field = TextFieldValue(next, TextRange(next.length))
+                onChange(next)
+            },
+            keyboardOptions = KeyboardOptions(
+                keyboardType = KeyboardType.NumberPassword,
+                imeAction = ImeAction.Next
+            ),
+            cursorBrush = SolidColor(Palette.ShiftRed),
+            singleLine = true,
+            textStyle = TextStyle(
+                fontSize = 20.sp,
+                fontWeight = FontWeight.Bold,
+                color = Palette.Ink,
+                textAlign = TextAlign.Center
+            ),
+            modifier = Modifier
+                .fillMaxWidth()
+                .focusRequester(focus)
         )
     }
 }

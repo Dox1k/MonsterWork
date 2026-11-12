@@ -31,8 +31,12 @@ fun parseTimeOrNull(raw: String?): java.time.LocalTime? {
     if (parts.size != 2) return null
     val h = parts[0].toIntOrNull() ?: return null
     val m = parts[1].toIntOrNull() ?: return null
-    if (h !in 0..23 || m !in 0..59) return null
-    return java.time.LocalTime.of(h, m)
+    // Пределы как их задал клиент: часы до 24, минуты до 60. Ровно на границе
+    // время перетекает в следующую единицу (24:00 — полночь, :60 — следующий час),
+    // иначе вышли бы «часы 24» и «60 минут», которых в сутках нет.
+    if (h !in 0..24 || m !in 0..60) return null
+    val total = (h * 60 + m) % 1440
+    return java.time.LocalTime.of(total / 60, total % 60)
 }
 
 /** Привести ввод к «HH:mm» или вернуть null, если время некорректное. */

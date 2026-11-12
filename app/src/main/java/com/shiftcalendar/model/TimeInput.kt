@@ -1,96 +1,136 @@
 package com.shiftcalendar.model
 
 /**
- * Чистое ядро ввода времени «ЧЧ:ММ» (решение клиента 11-Б).
+ * Состояние одного поля времени: часы и минуты, каждая часть — своими цифрами.
+ *
+ * Так поле устроено потому, что клиент просил именно ручной ввод: пользователь
+ * сам впечатывает «08» и «30», никаких кнопок «−/+» и никакой подстановки
+ * нулей. Поэтому часть хранится СТРОКОЙ, а не числом: пустая строка — это
+ * «пользователь стёр и ещё не ввёл», и она отличается от честного нуля «00».
+ *
+ * Пределы жёсткие: часы 0..24, минуты 0..60 (границы разрешены: 24:00 читается
+ * как полночь, 60 минут клиент разрешил явно). Цифра, от которой часть вышла
+ * бы за предел, просто не принимается — поле остаётся как было, без «прыжка»
+ * на другое значение.
+ */
+data class TimeParts(
+    /** Часы: «8», «08», «24» — или пусто, если стёрли. */
+    val hour: String = "",
+    /** Минуты: «5», «05», «30», «60» — или пусто, если стёрли. */
+    val minute: String = ""
+) {
+    val hourEmpty: Boolean get() = hour.isEmpty()
+    val minuteEmpty: Boolean get() = minute.isEmpty()
+
+    /** Обе части введены — время можно считать настоящим. */
+    val complete: Boolean get() = !hourEmpty && !minuteEmpty
+
+    /**
+     * Двумя цифрами для проверки предела и хранения: «8» → «08», «24» → «24».
+     * Пустая часть даёт null — это и есть «поле не заполнено».
+     */
+    fun hourValue(): Int? = hour.takeIf { it.isNotEmpty() }?.toIntOrNull()
+    fun minuteValue(): Int? = minute.takeIf { it.isNotEmpty() }?.toIntOrNull()
+
+    /**
+     * Текст стража: что именно не так с полем. null — всё в порядке.
+     * Нужен, чтобы под полем можно было написать причину, а не просто покрасить.
+     */
+    fun validationError(): String? = when {
+        hourEmpty -> "Впишите часы"
+        minuteEmpty -> "Впишите минуты"
+        (hourValue() ?: 0) > 24 -> "Часов не может быть больше 24"
+        (minuteValue() ?: 0) > 60 -> "Минут не может быть больше 60"
+        else -> null
+    }
+}
+
+/**
+ * Чистое ядро ввода времени без Android — на него опирается поле «ЧЧ:ММ»
+ * и в редакторе дня, и в конструкторе паттерна.
  *
  * Правила, как их задал клиент:
- *  - часов не больше двух цифр, минут не больше двух;
- *  - ввод «1» → «01», «1» затем «6» → «16»;
- *  - если новая цифра даёт часы больше 24, меняется ВТОРАЯ цифра:
- *    16 + «8» → 18, 16 + «2» → 12, 12 + «2» → 22, 22 + «0» → 02;
- *  - очистка полей работает адекватно: стирание возвращает поле к «00».
- *
- * Курсор мыслится справа: каждая цифра «дописывается» в правый разряд,
- * старая правая цифра при этом сдвигается влево и при переполнении теряется.
- * Модель без Android, поэтому проверяется обычными JUnit-тестами.
+ *  - часы и минуты пользователь впечатывает сам, подсказок и кнопок нет;
+ *  - предел часов — 24, предел минут — 60; больше ввести нельзя;
+ *  - стирание очищает разряд ЦЕЛИКОМ: было «16» — стало пусто, а не «00»;
+ *  - пустым поле остаться не может: при уходе из редактора оно не сохранится,
+ *    а пользователю показывается, чего не хватает.
  */
 object TimeInput {
 
-    /** Часы из двух цифр: больше 24 не бывает — 25…99 прижимаем к 24. */
-    private fun clampHour(h: Int): Int = h.coerceIn(0, 24)
+    /** Предел часов: «24» — полночь, дальше нельзя. */
+    const val MAX_HOUR = 24
 
-    /** Минуты из двух цифр: больше 59 не бывает. */
-    private fun clampMinute(m: Int): Int = m.coerceIn(0, 59)
+    /** Предел минут: клиент разрешил 60. */
+    const val MAX_MINUTE = 60
 
-    /**
-     * Разбор свободного текста в «ЧЧ:ММ» по правилам цифровой прокрутки.
-     * Понимает «16:05», «16:5», «1605» — что бы ни пришло из поля ввода.
-     */
-    fun parse(text: String): String {
-        val digits = text.filter { it.isDigit() }
-        val colon = text.indexOf(':')
-        var hourText: String
-        var minuteText: String
+    /** Разбор свободного текста в части; мусор даёт пустые части. */
+    fun parts(text: String?): TimeParts {
+        val clean = text?.trim().orEmpty()
+        if (clean.isEmpty()) return TimeParts()
+        val colon = clean.indexOf(':')
+        val hourText: String
+        val minuteText: String
         if (colon >= 0) {
-            hourText = text.substring(0, colon).filter { it.isDigit() }.take(2)
-            minuteText = text.substring(colon + 1).filter { it.isDigit() }.take(2)
+            hourText = clean.substring(0, colon).filter { it.isDigit() }.take(2)
+            minuteText = clean.substring(colon + 1).filter { it.isDigit() }.take(2)
         } else {
-            // Без разделителя первая цифра (до двух) — часы, остальное — минуты.
-            hourText = digits.take(if (digits.length <= 2) digits.length else 2)
-            minuteText = digits.drop(hourText.length).take(2)
-            if (digits.length == 3) {
-                hourText = digits.take(1)
-                minuteText = digits.drop(1)
-            }
+            val digits = clean.filter { it.isDigit() }.take(4)
+            // Без разделителя режем пополам: «830» → часы «8», минуты «30»,
+            // «2359» → «23» и «59». Одна цифра — это часы без минут.
+            hourText = if (digits.length <= 2) digits else digits.take(digits.length - 2)
+            minuteText = if (digits.length <= 2) "" else digits.takeLast(2)
         }
-        val hour = clampHour(hourText.toIntOrNull() ?: 0)
-        val minute = clampMinute(minuteText.toIntOrNull() ?: 0)
-        return "%02d:%02d".format(hour, minute)
-    }
-
-    /** Одна цифра, поступившая от клавиатуры. */
-    private fun digitOf(c: Char): Int? =
-        (c - '0').takeIf { c.isDigit() && it in 0..9 }
-
-    /**
-     * Ввод цифры в позицию [index] (0 — часы, 1 — минуты).
-     * Новая цифра встаёт в правый разряд, старая сдвигается влево.
-     * Возвращает «ЧЧ:ММ» и позицию, которая остаётся редактируемой.
-     */
-    fun digit(current: String, index: Int, digit: Char): Pair<String, Int> {
-        val visible = parse(current)
-        val d = digitOf(digit) ?: return visible to index
-        return if (index == 0) {
-            val h = (visible.substring(0, 1).toIntOrNull() ?: 0) * 10 + d
-            "%02d:%s".format(clampHour(h), visible.substring(3)) to 0
-        } else {
-            val m = (visible.substring(3, 4).toIntOrNull() ?: 0) * 10 + d
-            "%s:%02d".format(visible.substring(0, 2), clampMinute(m)) to 1
-        }
+        return TimeParts(hourText.take(2), minuteText.take(2))
     }
 
     /**
-     * Стирание одной цифры в позиции [index].
-     * «Стирание возвращает поле к 00»: цифра сдвигается влево, свободный
-     * правый разряд заполняется нулём. 16 → 10, 5 → 0 (то есть «00»).
+     * Новая часть после того, как пользователь впечатал цифру [digit].
+     * Свободный разряд — правый: «8» + «3» → «83» уже перебор для часов,
+     * поэтому цифра прижимается так, чтобы часть осталась в пределе.
      */
-    fun backspace(current: String, index: Int): Pair<String, Int> {
-        val visible = parse(current)
-        return if (index == 0) {
-            val h = visible.substring(1, 2).toIntOrNull() ?: 0
-            "%02d:%s".format(clampHour(h), visible.substring(3)) to 0
-        } else {
-            val m = visible.substring(4, 5).toIntOrNull() ?: 0
-            "%s:%02d".format(visible.substring(0, 2), clampMinute(m)) to 1
-        }
+    fun typeDigit(part: String, digit: Char, max: Int): String {
+        if (!digit.isDigit()) return part
+        val shifted = (part + digit).takeLast(2)
+        val value = shifted.toIntOrNull() ?: return part
+        if (value > max) return part       // предел — эта цифра не проходит
+        return shifted.trimStart('0').ifEmpty { "0" }
     }
 
-    /** Часы «ЧЧ» для отрисовки квадратами. */
-    fun hourText(value: String): String = parse(value).substring(0, 2)
+    /**
+     * Стирание одного символа в части: чистим разряд целиком.
+     * Стирание из «16» даёт пусто — ровно то, чего просил клиент; из «8» — тоже
+     * пусто, без превращения в ноль.
+     */
+    fun backspace(part: String): String = ""
 
-    /** Минуты «ММ» для отрисовки квадратами. */
-    fun minuteText(value: String): String = parse(value).substring(3, 5)
+    /** Часть в виде «ЧЧ» для проверки и показа; пустая остаётся пустой. */
+    fun twoDigits(part: String): String {
+        val value = part.toIntOrNull() ?: return ""
+        return "%02d".format(value.coerceIn(0, 99))
+    }
+
+    /** Готовое «ЧЧ:ММ», когда обе части введены; иначе частичными цифрами. */
+    fun compose(parts: TimeParts): String {
+        val h = parts.hour.ifEmpty { "" }
+        val m = parts.minute.ifEmpty { "" }
+        return if (h.isEmpty() && m.isEmpty()) "" else "$h:${if (m.isEmpty()) "" else m}"
+    }
 }
+
+/**
+ * Полное «ЧЧ:ММ» для хранения: обе части обязаны быть введены и в пределе.
+ * null — поле заполнено не до конца или значение вне предела, сохранять нельзя.
+ */
+fun TimeParts.toTimeOrNull(): String? {
+    if (validationError() != null) return null
+    val h = hourValue() ?: return null
+    val m = minuteValue() ?: return null
+    return "%02d:%02d".format(h, m)
+}
+
+/** Свободный текст в части времени; «08:30», «830» и «8:3» читаются одинаково. */
+fun parseTimeParts(text: String?): TimeParts = TimeInput.parts(text)
 
 /**
  * Округление до копеек (2 знака) — «half up», как ждёт бухгалтерия клиента:
