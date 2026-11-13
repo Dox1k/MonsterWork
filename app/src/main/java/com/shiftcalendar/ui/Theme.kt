@@ -31,6 +31,18 @@ data class AppColors(
     val outline: Color,        // рамки/разделители
     val weekendTint: Color,
     val onInk: Color,          // текст на «черных» кнопках-акцентах
+    /**
+     * Заливка выбранного чипа выбора (День/Ночь/Процент/…).
+     *
+     * Раньше выбранный чип красился в [ink], и в тёмной теме это давало светлую
+     * плашку на тёмном фоне — ровно то, на что жаловался клиент: «вместо
+     * выбранного ставится белый вырвиглазный цвет». Поэтому у выбранного
+     * состояния свой цвет: акцент смены (ShiftRed), а текст на нём — светлый
+     * [onAccent]. Так выбранное видно и не слепит ни в светлой, ни в тёмной теме.
+     */
+    val selectedChipBg: Color,
+    /** Текст на [selectedChipBg]. */
+    val onAccent: Color,
     val disabledBg: Color = ink.copy(alpha = 0.08f), // фон выключенной кнопки
     /**
      * Тонкая чёрная линия-разделитель. Ею отделяются друг от друга цветные
@@ -50,7 +62,9 @@ val LightColors = AppColors(
     cardBg = Color(0xFFFFFFFF),
     outline = Color(0xFFE2E4E8),
     weekendTint = Color(0xFFF6F7F9),
-    onInk = Color(0xFFFFFFFF)
+    onInk = Color(0xFFFFFFFF),
+    selectedChipBg = Color(0xFFD8433C),   // = shiftRed: выбранное в цвете смены
+    onAccent = Color(0xFFFFFFFF)
 )
 
 val DarkColors = AppColors(
@@ -64,7 +78,10 @@ val DarkColors = AppColors(
     cardBg = Color(0xFF1A1C21),
     outline = Color(0xFF2C2F35),
     weekendTint = Color(0xFF17191D),
-    onInk = Color(0xFF0F1115)   // в тёмной теме «черная» кнопка светлая
+    onInk = Color(0xFF0F1115),   // в тёмной теме «черная» кнопка светлая
+    // Выбранный чип — приглушённый красный акцента, не «белый вырвиглазный».
+    selectedChipBg = Color(0xFFB04A44),
+    onAccent = Color(0xFFF2F3F5)
 )
 
 val LocalAppColors = staticCompositionLocalOf { LightColors }
@@ -166,6 +183,9 @@ object Palette {
     val Outline: Color @Composable @ReadOnlyComposable get() = LocalAppColors.current.outline
     val WeekendTint: Color @Composable @ReadOnlyComposable get() = LocalAppColors.current.weekendTint
     val OnInk: Color @Composable @ReadOnlyComposable get() = LocalAppColors.current.onInk
+    /** Заливка выбранного чипа выбора и текст на ней. */
+    val SelectedChipBg: Color @Composable @ReadOnlyComposable get() = LocalAppColors.current.selectedChipBg
+    val OnAccent: Color @Composable @ReadOnlyComposable get() = LocalAppColors.current.onAccent
     val Hairline: Color @Composable @ReadOnlyComposable get() = LocalAppColors.current.hairline
     val DisabledBg: Color @Composable @ReadOnlyComposable get() = LocalAppColors.current.disabledBg
 }

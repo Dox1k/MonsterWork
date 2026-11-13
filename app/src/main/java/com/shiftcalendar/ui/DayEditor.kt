@@ -267,9 +267,22 @@ fun DayEditor(
                 Spacer(Modifier.height(14.dp))
                 TimeFieldLabel("Ставка, ₽/час")
                 Spacer(Modifier.height(4.dp))
+                // Решение клиента: ноль допустим — поле показывает введённый «0»,
+                // а не пустоту, чтобы было видно, что значение принялось.
+                var rateText by remember(state.editingRate) {
+                    mutableStateOf(
+                        if (state.editingRate == 0.0) ""
+                        else if (state.editingRate % 1.0 == 0.0) state.editingRate.toLong().toString()
+                        else state.editingRate.toString().replace('.', ',')
+                    )
+                }
                 OutlinedTextField(
-                    value = if (state.editingRate == 0.0) "" else if (state.editingRate % 1.0 == 0.0) state.editingRate.toLong().toString() else state.editingRate.toString().replace('.', ','),
-                    onValueChange = { txt -> onRate(txt.replace(',', '.').filter { c -> c.isDigit() || c == '.' }.toDoubleOrNull() ?: 0.0) },
+                    value = rateText,
+                    onValueChange = { txt ->
+                        val cleaned = txt.replace(',', '.').filter { c -> c.isDigit() || c == '.' }.take(9)
+                        rateText = cleaned.replace('.', ',')
+                        onRate(cleaned.toDoubleOrNull() ?: 0.0)
+                    },
                     placeholder = { Text("например 500", color = Palette.Muted) },
                     keyboardOptions = KeyboardOptions(keyboardType = KeyboardType.Decimal),
                     singleLine = true,
@@ -478,10 +491,12 @@ private fun ChipChoice(label: String, selected: Boolean, modifier: Modifier, onC
         modifier
             .height(40.dp)
             .clip(RoundedCornerShape(10.dp))
-            .background(if (selected) Palette.Ink else Palette.CardBg)
+            // Выбранное состояние — акцент, а не Ink: в тёмной теме Ink светлый
+            // и выбранный чип выглядел слепящей белой плашкой (жалоба клиента).
+            .background(if (selected) Palette.SelectedChipBg else Palette.CardBg)
             .border(
                 1.dp,
-                if (selected) Palette.Ink else Palette.Outline,
+                if (selected) Palette.SelectedChipBg else Palette.Outline,
                 RoundedCornerShape(10.dp)
             )
             .clickable(onClick = onClick),
@@ -491,7 +506,7 @@ private fun ChipChoice(label: String, selected: Boolean, modifier: Modifier, onC
             label,
             fontSize = 13.sp,
             fontWeight = if (selected) FontWeight.SemiBold else FontWeight.Normal,
-            color = if (selected) Palette.OnInk else Palette.Ink
+            color = if (selected) Palette.OnAccent else Palette.Ink
         )
     }
 }

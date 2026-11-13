@@ -685,22 +685,50 @@ private fun StepChoice(label: String, selected: Boolean, modifier: Modifier, onC
         modifier
             .height(34.dp)
             .clip(RoundedCornerShape(8.dp))
-            .background(if (selected) Palette.Ink else Palette.CardBg)
-            .border(1.dp, if (selected) Palette.Ink else Palette.Outline, RoundedCornerShape(8.dp))
+            // Выбранный чип — акцент темы, не «белая плашка»: раньше здесь стоял
+            // Ink, и в тёмной теме выбранное выглядело слепящим белым.
+            .background(if (selected) Palette.SelectedChipBg else Palette.CardBg)
+            .border(1.dp, if (selected) Palette.SelectedChipBg else Palette.Outline, RoundedCornerShape(8.dp))
             .clickable(onClick = onClick),
         contentAlignment = Alignment.Center
     ) {
-        // Текст на «чёрной» кнопке: OnInk (в тёмной теме кнопка светлая, текст тёмный)
-        Text(label, fontSize = 12.sp, color = if (selected) Palette.OnInk else Palette.Ink)
+        Text(
+            label,
+            fontSize = 12.sp,
+            fontWeight = if (selected) FontWeight.SemiBold else FontWeight.Normal,
+            color = if (selected) Palette.OnAccent else Palette.Ink
+        )
     }
 }
 
+/**
+ * Ставка ₽/ч.
+ *
+ * Решение клиента: ноль разрешён — «пока так» можно ставить 0 ₽/ч всем сменам
+ * цикла (смены сохраняются, деньги просто не считаются). Поэтому поле помнит
+ * пустое состояние отдельно от нуля: если пользователь ввёл «0», поле показывает
+ * «0», а не пусто; стёр поле — снова пусто. Раньше любой ноль выглядел как пустое
+ * поле, и было непонятно, принялось ли значение.
+ *
+ * [remember(value)] держит введённый текст между рекомпозициями: без этого
+ * «0» затиралось бы обратно в пустоту сразу после ввода.
+ */
 @Composable
 private fun RateField(value: Double, onChange: (Double) -> Unit, compact: Boolean = false) {
+    var text by remember(value) {
+        mutableStateOf(if (value == 0.0) "" else if (value % 1.0 == 0.0) value.toLong().toString() else value.toString().replace('.', ','))
+    }
     OutlinedTextField(
-        value = if (value == 0.0) "" else if (value % 1.0 == 0.0) value.toLong().toString() else value.toString().replace('.', ','),
-        onValueChange = { txt ->
-            onChange(txt.replace(',', '.').filter { c -> c.isDigit() || c == '.' }.toDoubleOrNull() ?: 0.0)
+        value = text,
+        onValueChange = { raw ->
+            val cleaned = raw.replace(',', '.').filter { c -> c.isDigit() || c == '.' }.take(9)
+            text = cleaned.replace('.', ',')
+            // Пустая строка — «ещё не введено», ноль от неё отличается осознанно.
+            if (cleaned.isEmpty()) {
+                onChange(0.0)
+            } else {
+                cleaned.toDoubleOrNull()?.let { if (it in 0.0..100_000.0) onChange(it) }
+            }
         },
         placeholder = { Text(if (compact) "ставка ₽/ч" else "например 500", color = Palette.Muted) },
         suffix = { Text("₽/ч", color = Palette.Muted, fontSize = 12.sp) },

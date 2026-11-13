@@ -135,6 +135,24 @@ class PatternNormalizeTest {
         assertEquals(ShiftKind.DAY, step.resolvedKind)
     }
 
+    /**
+     * Решение клиента «пока так»: ставка 0 ₽/ч разрешена всем сменам цикла.
+     * Смены должны проставиться, часы остаться, деньги — нулевые. Раньше ноль
+     * выглядел как незаполненное поле, и было непонятно, принялось ли значение.
+     */
+    @Test
+    fun `нулевая ставка допустима и не мешает проставить смены`() {
+        val zero = PatternStep(kind = ShiftKind.DAY, startTime = "08:00", endTime = "20:00", rate = 0.0)
+        assertTrue(patternProblems(listOf(zero, off)).isEmpty())
+
+        val start = LocalDate.of(2026, 11, 1)
+        val res = buildPatternShifts(listOf(zero, off), start, start, start.plusDays(1), false, 0L, emptySet())
+        assertEquals(2, res.shifts.size)
+        assertEquals(12.0, res.shifts[0].hours, 0.001)
+        assertEquals(0.0, res.shifts[0].rate, 0.001)
+        assertEquals(0.0, res.totalEarned, 0.001)
+    }
+
     private fun worked(start: String, end: String) =
         PatternStep(kind = ShiftKind.DAY, startTime = start, endTime = end, rate = 100.0)
 }
