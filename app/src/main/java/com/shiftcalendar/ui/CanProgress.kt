@@ -86,7 +86,12 @@ fun BankProgressCard(
         }
         Spacer(Modifier.height(12.dp))
         Row(verticalAlignment = Alignment.CenterVertically) {
-            Can(fill = progress, modifier = Modifier.size(width = 62.dp, height = 104.dp))
+            Can(
+                fill = progress,
+                modifier = Modifier.size(width = 62.dp, height = 104.dp),
+                particles = progress,
+                seed = shift.id
+            )
             Spacer(Modifier.width(18.dp))
             Column(Modifier.weight(1f)) {
                 Text(
@@ -178,9 +183,14 @@ fun MonsterBanks(shift: Shift?, now: LocalDateTime) {
             horizontalArrangement = Arrangement.spacedBy(6.dp)
         ) {
             itemsIndexed(List(total) { it }, key = { i, _ -> i }) { index, _ ->
+                val f = canFill(index, elapsed)
                 Can(
-                    fill = canFill(index, elapsed),
-                    modifier = Modifier.size(width = 28.dp, height = 50.dp)
+                    fill = f,
+                    modifier = Modifier.size(width = 28.dp, height = 50.dp),
+                    // Частицы идут в той банке, чей час сейчас отрабатывается:
+                    // зелёная «работа» видна ровно в текущем часе смены.
+                    particles = f,
+                    seed = shift.id * 31L + index
                 )
             }
         }
@@ -190,16 +200,20 @@ fun MonsterBanks(shift: Shift?, now: LocalDateTime) {
 /**
  * Банка: пока прогресс 0 — светлый контур, по мере смены тёмная заливка
  * поднимается снизу вверх и проявляется логотип-«когти».
+ * [particles] — доля прошедшей смены (0..1): внутри заливки видны зелёные
+ * частицы, которые поднимаются вверх, как в прошлой версии дизайна.
+ * [seed] — стабильное зерно частиц (id смены): без него частицы «дрожали» бы
+ * при каждой перерисовке.
  */
 @Composable
-fun Can(fill: Float, modifier: Modifier = Modifier) {
+fun Can(fill: Float, modifier: Modifier = Modifier, particles: Float = 0f, seed: Long = 0L) {
     val empty = BankPalette.Empty
     Canvas(modifier = modifier) {
-        drawCan(fill.coerceIn(0f, 1f), empty)
+        drawCan(fill.coerceIn(0f, 1f), empty, particles.coerceIn(0f, 1f), seed)
     }
 }
 
-private fun DrawScope.drawCan(fill: Float, empty: Color) {
+private fun DrawScope.drawCan(fill: Float, empty: Color, particles: Float = 0f, seed: Long = 0L) {
     val w = size.width
     val h = size.height
     val bodyTop = h * 0.10f
@@ -230,6 +244,10 @@ private fun DrawScope.drawCan(fill: Float, empty: Color) {
                 topLeft = Offset(0f, fillTop),
                 size = Size(w, bodyBottom - fillTop)
             )
+            // Зелёные частицы смены: пока идёт смена, внутри заливки
+            // поднимаются вверх искорки. Их высота привязана к прогрессу,
+            // поэтому частицы не «застывают» без перерисовки.
+            drawShiftParticles(fillTop, bodyBottom, w, particles, seed)
             // зелёный логотип-«когти» проявляется вместе с заливкой
             val alpha = (fill * 1.6f).coerceIn(0f, 1f)
             val cx = w / 2f
@@ -265,6 +283,51 @@ private fun DrawScope.drawCan(fill: Float, empty: Color) {
 
     // Контур
     drawPath(bodyPath, color = BankPalette.CanDark.copy(alpha = 0.35f), style = Stroke(width = 1.5f))
+}
+
+/**
+ * Зелёные частицы внутри заливки банки: маленькие точки и полоски, которые
+ * поднимаются вверх вместе с заполнением. Чем больше прошло смены, тем выше
+ * поднимаются и тем плотнее светятся — так «работа идёт» видно глазом.
+ *
+ * Частицы детерминированы по [seed] (id смены): позиции не зависят от времени
+ * кадра, поэтому картинка не дрожит, а фиксированный набор точек просто
+ * постепенно поднимается вместе с уровнем заливки.
+ */
+private fun DrawScope.drawShiftParticles(
+    fillTop: Float,
+    bodyBottom: Float,
+    w: Float,
+    particles: Float,
+    seed: Long
+) {
+    if (particles <= 0f) return
+    val span = (bodyBottom - fillTop).coerceAtLeast(1f)
+    val rnd = java.util.Random(if (seed != 0L) seed else 1L)
+    val count = (18 + (particles * 22).toInt()).coerceAtMost(46)
+    val green = BankPalette.MonsterGreen
+    repeat(count) { i ->
+        // Каждая частица живёт в своём «цикле» подъёма: фаза задаётся seed'ом,
+        // а высота — уровнем заливки, чтобы частицы были видны уже с первых минут.
+        val phase = rnd.nextFloat()
+        val x = w * (0.12f + 0.76f * rnd.nextFloat())
+        val rise = ((phase + particles) % 1f)
+        val y = bodyBottom - span * rise
+        if (y < fillTop || y > bodyBottom) return@repeat
+        val alpha = (0.35f + 0.65f * particles).coerceIn(0f, 1f)
+        val r = (w * 0.035f) * (0.6f + 0.8f * rnd.nextFloat())
+        if (i % 3 == 0) {
+            // Полоска-пузырёк: чуть выше обычной точки.
+            drawRoundRect(
+                color = green.copy(alpha = alpha * 0.75f),
+                topLeft = Offset(x - r * 0.5f, y - r * 1.6f),
+                size = Size(r, r * 2.6f),
+                cornerRadius = androidx.compose.ui.geometry.CornerRadius(r * 0.5f)
+            )
+        } else {
+            drawCircle(color = green.copy(alpha = alpha), radius = r, center = Offset(x, y))
+        }
+    }
 }
 
 /**

@@ -236,7 +236,13 @@ data class PatternProfile(
     /** Цвет рабочих дней, ARGB int. */
     val workColor: Long = DEFAULT_WORK_COLOR,
     /** Цвет выходных, ARGB int. */
-    val dayOffColor: Long = DEFAULT_DAYOFF_COLOR
+    val dayOffColor: Long = DEFAULT_DAYOFF_COLOR,
+    /**
+     * Главный профиль (просьба клиента): только по его рабочим сменам идут
+     * банки монстров (1 банка за час) и статистика одной смены. Главный
+     * профиль в календаре ровно один — галочка в настройках паттерна внизу.
+     */
+    val isMain: Boolean = false
 ) {
     companion object {
         const val DEFAULT_WORK_COLOR = 0xFFD8433CL   // красный
@@ -265,6 +271,7 @@ fun profileToJson(p: PatternProfile): String {
         .put("name", p.name)
         .put("workColor", p.workColor)
         .put("dayOffColor", p.dayOffColor)
+        .put("isMain", p.isMain)
         .put("steps", steps)
         .toString()
 }
@@ -292,9 +299,26 @@ fun profileFromJson(text: String): PatternProfile? = runCatching {
         name = o.getString("name"),
         steps = steps,
         workColor = o.optLong("workColor", PatternProfile.DEFAULT_WORK_COLOR),
-        dayOffColor = o.optLong("dayOffColor", PatternProfile.DEFAULT_DAYOFF_COLOR)
+        dayOffColor = o.optLong("dayOffColor", PatternProfile.DEFAULT_DAYOFF_COLOR),
+        isMain = o.optBoolean("isMain", false)
     )
 }.getOrNull()
+
+/**
+ * Сделать профиль [id] главным, сняв галочку с остальных: главный профиль
+ * в календаре ровно один. [main] = false просто снимает галочку.
+ */
+fun List<PatternProfile>.withMainProfile(id: Long, main: Boolean = true): List<PatternProfile> =
+    map { p ->
+        when {
+            p.id == id -> p.copy(isMain = main)
+            main -> p.copy(isMain = false)
+            else -> p
+        }
+    }
+
+/** Главный профиль списка, если он задан. */
+fun List<PatternProfile>.mainProfile(): PatternProfile? = firstOrNull { it.isMain }
 
 fun profilesToJson(list: List<PatternProfile>): String {
     val arr = JSONArray()

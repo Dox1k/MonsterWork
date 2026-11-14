@@ -67,31 +67,39 @@ fun MonthScreen(
                 .fillMaxSize()
                 .verticalScroll(rememberScrollState())
         ) {
-            // Живая карточка «ИДЁТ СМЕНА» и банки — по первому профилю дня (решение 16-Б).
+            // Живая карточка «ИДЁТ СМЕНА» — только по смене главного профиля
+            // (просьба клиента). Пока галочки «главный профиль» нет, карточки
+            // нет: считать чужую смену было бы неверно.
             val todayShifts = shiftsOnDate(state.months, state.now.toLocalDate())
-            currentShift(state.months, state.now)?.let { running ->
+            val running = runningMainProfileShift(state)
+            running?.let { running0 ->
                 BankProgressCard(
-                    shift = running,
+                    shift = running0,
                     now = state.now,
                     threshold = runCatching { java.time.LocalTime.parse(state.nightThreshold) }.getOrDefault(java.time.LocalTime.of(22, 0)),
                     nightEnd = runCatching { java.time.LocalTime.parse(state.nightEnd) }.getOrDefault(java.time.LocalTime.of(6, 0)),
                     percent = state.nightPremiumPercent,
-                    onOpen = { runCatching { LocalDate.parse(running.date, ISO) }.getOrNull()?.let(onOpenDay) }
+                    onOpen = { runCatching { LocalDate.parse(running0.date, ISO) }.getOrNull()?.let(onOpenDay) }
                 )
             }
             CalendarGrid(state, onOpenDay, onPrevMonth, onNextMonth)
-            // Банки текущей смены: 1 банка = час без перерыва. Считаем по смене
-            // первого профиля сегодняшнего дня (решения 16-Б, 7-Б). Показывается всегда (5-Б):
-            // нет смены — пустой блок с подсказкой.
-            MonsterBanks(
-                shift = dayBanksShift(todayShifts) ?: currentShift(state.months, state.now),
-                now = state.now
-            )
+            // Банки монстров — только по смене главного профиля (просьба клиента):
+            // 1 банка = час без перерыва, идут лишь за рабочие смены главного
+            // профиля. Пока главный профиль не выбран (галочки нет) — блока нет
+            // вовсе: банки не идут и не отображаются.
+            if (state.mainProfileId > 0L) {
+                MonsterBanks(
+                    shift = dayBanksShift(todayShifts, state.mainProfileId),
+                    now = state.now
+                )
+            }
             LegendRow(state)
-            // Статистика за выбранный месяц
+            // Статистика за выбранный месяц: смены каждого профиля отдельно
+            // плюс общая статистика смен за месяц (просьба клиента).
             state.current?.let { cur ->
                 TotalsCard(
                     shifts = cur.worked,
+                    profiles = state.profiles,
                     thresholdStart = java.time.LocalTime.parse(
                         runCatching { state.nightThreshold }.getOrDefault("22:00")
                     ),
@@ -314,11 +322,13 @@ private fun CalendarGrid(state: UiState, onOpenDay: (LocalDate) -> Unit, onPrevM
 
 /**
  * Ячейка дня. Работает и для одного денька, и для дня с несколькими сменами:
- *  - фон — цвет первой смены (или цвета профиля, если он их задал);
- *  - под числом — по тонкой полоске на каждую смену, каждая своим цветом,
- *    так что вторая смена видна даже если она накладывается на первую;
- *  - у дня с одной сменой подпись остаётся временем «08:00–20:00», у дня с
- *    несколькими — «2 см · 14 ч», иначе в 44 dp не влезет ничего читаемого.
+ *  - квадрат делится на две половины, когда в дне сошлись два профиля:
+ *    верхняя — цвет первого профиля, нижняя — второго; чёрной разделительной
+ *    полосы между ними нет (просьба клиента) — цвет виден сам по себе;
+ *  - время смены стоит в СВОЕЙ половине: фиолетовая смена (профиль 1)
+ *    показывает время вверху ячейки, красная (профиль 2) — внизу;
+ *  - у дня с одной сменой подпись — время «08:00–20:00», у дня с несколькими —
+ *    «2 см · 14 ч», иначе в 44 dp не влезет ничего читаемого.
  */
 @Composable
 private fun DayCell(
@@ -341,6 +351,11 @@ private fun DayCell(
     val cellBg: Brush? = split?.let {
         Brush.verticalGradient(0.5f to it.first, 0.5f to it.second)
     }
+    // Время каждой половины: своё у верхнего профиля и у нижнего.
+    val (topProfileId, bottomProfileId) = dayProfilePair(ordered)
+    val splitTwoProfiles = topProfileId > 0L && bottomProfileId > 0L && bottomProfileId != topProfileId
+    val topTime = if (splitTwoProfiles) timeLabelForProfile(ordered, topProfileId) else dayTimeLabel(ordered)
+    val bottomTime = if (splitTwoProfiles) timeLabelForProfile(ordered, bottomProfileId) else null
     Box(
         Modifier
             .padding(1.dp)
@@ -368,38 +383,52 @@ private fun DayCell(
             },
         contentAlignment = Alignment.Center
     ) {
-        Column(horizontalAlignment = Alignment.CenterHorizontally) {
-            // Число: белое на залитом квадрате, черное — на пустом.
-            val filled = ordered.isNotEmpty()
-            // День с двумя профилями — половины разного цвета: между ними
-            // проходит тонкая чёрная линия, чтобы граница была видна.
-            if (split != null && split.first != split.second) {
-                Box(Modifier.fillMaxWidth().height(1.dp).background(Palette.Hairline))
+        // Число: белое на залитом квадрате, черное — на пустом.
+        val filled = ordered.isNotEmpty()
+        Text(
+            "${date.dayOfMonth}",
+            fontSize = 13.sp,
+            fontWeight = if (filled || isToday) FontWeight.Bold else FontWeight.Normal,
+            color = if (filled) Color.White else Palette.Ink
+        )
+        // Время половин — поверх числа, каждая у своего края квадрата. Так
+        // фиолетовая смена показывает время вверху, красная — внизу.
+        if (splitTwoProfiles) {
+            topTime?.let {
+                Text(
+                    it,
+                    fontSize = 7.sp,
+                    color = Color.White.copy(alpha = 0.92f),
+                    maxLines = 1,
+                    modifier = Modifier.align(Alignment.TopCenter).padding(top = 3.dp)
+                )
             }
-            Text(
-                "${date.dayOfMonth}",
-                fontSize = 13.sp,
-                fontWeight = if (filled || isToday) FontWeight.Bold else FontWeight.Normal,
-                color = if (filled) Color.White else Palette.Ink
-            )
+            bottomTime?.let {
+                Text(
+                    it,
+                    fontSize = 7.sp,
+                    color = Color.White.copy(alpha = 0.92f),
+                    maxLines = 1,
+                    modifier = Modifier.align(Alignment.BottomCenter).padding(bottom = 3.dp)
+                )
+            }
+            return@Box
+        }
+        Column(
+            horizontalAlignment = Alignment.CenterHorizontally,
+            modifier = Modifier.align(Alignment.BottomCenter).padding(bottom = 3.dp)
+        ) {
             when {
                 dayOff && summary.workCount == 0 ->
                     Text("вых", fontSize = 7.sp, color = Color.White.copy(alpha = 0.9f))
-                summary.workCount == 1 && !dayOff -> {
-                    // Время дня — только по первому профилю (решение 15-Б).
-                    dayTimeLabel(ordered)?.let { label ->
-                        Text(
-                            label,
-                            fontSize = 7.sp,
-                            color = Color.White.copy(alpha = 0.9f),
-                            maxLines = 1
-                        )
+                summary.workCount == 1 && !dayOff ->
+                    topTime?.let { label ->
+                        Text(label, fontSize = 7.sp, color = Color.White.copy(alpha = 0.9f), maxLines = 1)
                     }
-                }
                 summary.workCount > 1 -> {
                     // Полоски-слоты: дизайн «точечек» (9-А). На залитом фоне — белые.
                     Row(horizontalArrangement = Arrangement.spacedBy(1.5.dp)) {
-                        work.take(4).forEach { shift ->
+                        work.take(4).forEach { _ ->
                             Box(
                                 Modifier
                                     .width(4.dp)
@@ -467,9 +496,18 @@ private fun LegendDot(color: Color, label: String) {
     }
 }
 
+/**
+ * Статистика месяца.
+ *
+ * Сверху — общая строка за месяц (все смены календаря вместе), ниже — по
+ * строке на каждый профиль со смены ЭТОГО профиля: смены каждого профиля
+ * считаются раздельно (просьба клиента). Профили без смен в месяце не
+ * показываются; ручные смены без профиля попадают в строку «Без профиля».
+ */
 @Composable
 private fun TotalsCard(
     shifts: List<Shift>,
+    profiles: List<PatternProfile>,
     thresholdStart: java.time.LocalTime,
     thresholdEnd: java.time.LocalTime,
     percent: Double,
@@ -507,6 +545,40 @@ private fun TotalsCard(
                 TotalItem("Часов", formatHours(shifts.sumOf { it.hours }))
                 TotalItem("Зарплата", formatMoney(earned), accent = Palette.DayOffGreen)
             }
+            val perProfile = shifts.groupBy { it.profileId }
+            if (perProfile.isNotEmpty()) {
+                Spacer(Modifier.height(12.dp))
+                Text("Смены по профилям", fontSize = 10.sp, color = Palette.Muted, fontWeight = FontWeight.SemiBold)
+                Spacer(Modifier.height(6.dp))
+                profiles.forEach { p ->
+                    val own = perProfile[p.id] ?: emptyList()
+                    if (own.isNotEmpty()) {
+                        val ownEarned = own.sumOf {
+                            shiftEarnings(it, thresholdStart, thresholdEnd, percent, it.breakMinutes)
+                        }
+                        ProfileStatRow(
+                            dot = Color(p.workColor),
+                            label = p.name + if (p.isMain) " ★" else "",
+                            count = own.size,
+                            hours = own.sumOf { it.hours },
+                            earned = ownEarned
+                        )
+                    }
+                }
+                val manual = perProfile[0L].orEmpty()
+                if (manual.isNotEmpty()) {
+                    val manualEarned = manual.sumOf {
+                        shiftEarnings(it, thresholdStart, thresholdEnd, percent, it.breakMinutes)
+                    }
+                    ProfileStatRow(
+                        dot = Palette.Muted,
+                        label = "Без профиля",
+                        count = manual.size,
+                        hours = manual.sumOf { it.hours },
+                        earned = manualEarned
+                    )
+                }
+            }
             if (expanded && planned.isNotEmpty()) {
                 Spacer(Modifier.height(12.dp))
                 Text(
@@ -516,6 +588,42 @@ private fun TotalsCard(
             }
         }
     }
+}
+
+/** Строка статистики одного профиля: точка его цвета, смены, часы, деньги. */
+@Composable
+private fun ProfileStatRow(
+    dot: Color,
+    label: String,
+    count: Int,
+    hours: Double,
+    earned: Double
+) {
+    Row(
+        Modifier.fillMaxWidth().padding(vertical = 3.dp),
+        verticalAlignment = Alignment.CenterVertically
+    ) {
+        Box(Modifier.size(9.dp).clip(CircleShape).background(dot))
+        Spacer(Modifier.width(6.dp))
+        Text(label, fontSize = 12.sp, color = Palette.Ink, modifier = Modifier.weight(1f))
+        Text(
+            "$count см · ${formatHours(hours)} · ${formatMoney(earned)}",
+            fontSize = 11.sp,
+            color = Palette.Muted
+        )
+    }
+}
+
+/**
+ * Смена главного профиля, идущая прямо сейчас — в том числе ночная,
+ * начавшаяся вчера. Для карточки «ИДЁТ СМЕНА». Без главного профиля — null:
+ * карточки и банок тогда нет вовсе.
+ */
+private fun runningMainProfileShift(state: UiState): Shift? {
+    if (state.mainProfileId <= 0L) return null
+    return state.months.flatMap { it.shifts }
+        .filter { it.profileId == state.mainProfileId && !it.isDayOff && it.startTime != null }
+        .firstOrNull { shiftProgress(it, state.now) > 0f && shiftProgress(it, state.now) < 1f }
 }
 
 @Composable

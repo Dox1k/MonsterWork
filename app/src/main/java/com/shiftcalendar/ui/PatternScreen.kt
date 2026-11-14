@@ -63,7 +63,9 @@ fun PatternScreen(
     onDeleteProfile: (Long) -> Unit,
     onProfileName: (String) -> Unit,
     onWorkColor: (Long) -> Unit,
-    onDayOffColor: (Long) -> Unit
+    onDayOffColor: (Long) -> Unit,
+    /** Галочка «главный профиль» внизу настроек паттерна. */
+    onMainProfile: (Boolean) -> Unit
 ) {
     Scaffold(
         containerColor = Palette.Paper,
@@ -312,9 +314,50 @@ fun PatternScreen(
                 }
             }
 
+            Spacer(Modifier.height(22.dp))
+
+            // 6. Главный профиль — в самом низу настроек паттерна (просьба клиента).
+            MainProfileRow(
+                state = state,
+                onMainProfile = onMainProfile
+            )
+
             Spacer(Modifier.height(80.dp))
         }
     }
+}
+
+/**
+ * Галочка «главный профиль» внизу настроек паттерна.
+ *
+ * Главный профиль в календаре ровно один: банки монстров (1 шт за час) и
+ * статистика одной смены идут только за рабочие смены этого профиля. Галочку
+ * можно поставить только у сохранённого профиля — несохранённый цикл нечему
+ * привязывать. Снятие галочки тоже поддерживается.
+ */
+@Composable
+private fun MainProfileRow(state: UiState, onMainProfile: (Boolean) -> Unit) {
+    val current = state.profiles.firstOrNull { it.id == state.selectedProfileId }
+    val isMain = current?.isMain == true
+    Label("Главный профиль")
+    Spacer(Modifier.height(4.dp))
+    Text(
+        "Банки монстров (1 шт за час смены) и статистика одной смены идут только " +
+            "за рабочие смены главного профиля. Главный может быть только один.",
+        fontSize = 11.sp,
+        color = Palette.Muted
+    )
+    Spacer(Modifier.height(8.dp))
+    ToggleRow(
+        title = if (current == null) "Сначала сохраните профиль" else "«${current.name}» — главный",
+        subtitle = if (current == null)
+            "Галочка ставится у сохранённого профиля: выберите его выше или сохраните цикл"
+        else if (isMain) "Банки и статистика идут по сменам этого профиля"
+        else "Банки сейчас не идут ни за кого, пока главный профиль не выбран",
+        checked = isMain,
+        enabled = current != null,
+        onChecked = onMainProfile
+    )
 }
 
 // ---------- Профили ----------
@@ -819,13 +862,15 @@ private fun ToggleRow(
     title: String,
     subtitle: String,
     checked: Boolean,
-    onChecked: (Boolean) -> Unit
+    onChecked: (Boolean) -> Unit,
+    /** Выключенный переключатель: показывается, но не переключается. */
+    enabled: Boolean = true
 ) {
     Row(
         Modifier
             .fillMaxWidth()
             .padding(vertical = 6.dp)
-            .clickable { onChecked(!checked) },
+            .clickable(enabled = enabled) { if (enabled) onChecked(!checked) },
         verticalAlignment = Alignment.CenterVertically
     ) {
         Column(Modifier.weight(1f)) {
@@ -835,6 +880,7 @@ private fun ToggleRow(
         Switch(
             checked = checked,
             onCheckedChange = onChecked,
+            enabled = enabled,
             colors = SwitchDefaults.colors(
                 checkedThumbColor = Palette.OnInk,
                 checkedTrackColor = Palette.DayOffGreen,

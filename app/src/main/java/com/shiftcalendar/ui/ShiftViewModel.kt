@@ -116,6 +116,11 @@ data class UiState(
     val workColor: Long = PatternProfile.DEFAULT_WORK_COLOR,
     /** Цвет выходных профиля, ARGB. */
     val dayOffColor: Long = PatternProfile.DEFAULT_DAYOFF_COLOR,
+    /**
+     * Главный профиль календаря (id) — только по его рабочим сменам идут банки
+     * монстров и статистика одной смены. 0 — главный не задан (банки не идут).
+     */
+    val mainProfileId: Long = 0L,
     /** Диалог подтверждения удаления. scope: "month" — месяц, "all" — весь календарь. */
     val clearShiftsConfirm: Boolean = false,
     val clearScope: String = "month"
@@ -181,7 +186,8 @@ class ShiftViewModel(app: Application) : AndroidViewModel(app) {
             collection = prefs.getStringSet("collection", emptySet())!!.mapNotNull(::decodeReward),
             rewardsByShift = prefs.all.filterKeys { it.startsWith("reward_") }
                 .mapNotNull { (key, value) -> key.removePrefix("reward_").toLongOrNull()?.let { it to (value as? String ?: return@mapNotNull null) } }.toMap(),
-            profiles = profilesFromJson(prefs.getString("profiles_json", "") ?: "")
+            profiles = profilesFromJson(prefs.getString("profiles_json", "") ?: ""),
+            mainProfileId = prefs.getLong("main_profile_id", 0L)
         )
     )
     val state: StateFlow<UiState> = _state.asStateFlow()
@@ -952,17 +958,25 @@ class ShiftViewModel(app: Application) : AndroidViewModel(app) {
         if (s.patternSteps.isEmpty()) return
         val name = s.profileName.trim().ifEmpty { "Профиль ${s.profiles.size + 1}" }
         val id = if (s.selectedProfileId >= 0L) s.selectedProfileId else nextProfileId()
+        val existing = s.profiles.firstOrNull { it.id == id }
+        // Первый созданный профиль сразу становится главным: галочка внизу
+        // настроек появляется уже отмеченной. Дальше галочка живёт в списке
+        // профилей, и сохранение цикла её не сбрасывает.
+        val newIsMain = existing?.isMain == true || s.profiles.none { it.isMain }
         val profile = PatternProfile(
             id = id,
             name = name,
             steps = s.patternSteps,
             workColor = s.workColor,
-            dayOffColor = s.dayOffColor
+            dayOffColor = s.dayOffColor,
+            isMain = newIsMain
         )
-        val list = s.profiles.filterNot { it.id == id } + profile
+        val list = s.profiles.withMainProfile(id, newIsMain).filterNot { it.id == id } + profile
         saveProfiles(list)
+        prefs.edit().putLong("main_profile_id", list.mainProfile()?.id ?: 0L).apply()
         _state.value = _state.value.copy(
             profiles = list,
+            mainProfileId = list.mainProfile()?.id ?: 0L,
             selectedProfileId = id,
             profileName = name,
             savedFlash = "Профиль «$name» сохранён"
@@ -974,8 +988,12 @@ class ShiftViewModel(app: Application) : AndroidViewModel(app) {
         val s = _state.value
         val list = s.profiles.filterNot { it.id == id }
         saveProfiles(list)
+        // Удалили главный профиль — главного больше нет, банки не идут ни за кого.
+        val mainId = if (list.mainProfile() != null) s.mainProfileId else 0L
+        prefs.edit().putLong("main_profile_id", mainId).apply()
         _state.value = s.copy(
             profiles = list,
+            mainProfileId = mainId,
             selectedProfileId = if (s.selectedProfileId == id) -1L else s.selectedProfileId,
             profileName = if (s.selectedProfileId == id) "" else s.profileName
         )
@@ -994,6 +1012,21 @@ class ShiftViewModel(app: Application) : AndroidViewModel(app) {
     /** Цвет выходных профиля. */
     fun setDayOffColor(argb: Long) {
         _state.value = _state.value.copy(dayOffColor = argb)
+    }
+
+    /**
+     * Главный профиль (галочка внизу настроек паттерна): главный в календаре
+     * ровно один, поэтому у остальных галочка снимается. Отдельное сохранение
+     * профиля для этого не нужно — применяется сразу и к профилю, и к состоянию.
+     */
+    fun setMainProfile(id: Long, main: Boolean = true) {
+        val s = _state.value
+        if (id <= 0L) return
+        val list = s.profiles.withMainProfile(id, main)
+        saveProfiles(list)
+        val mainId = if (list.mainProfile() != null) id else 0L
+        prefs.edit().putLong("main_profile_id", mainId).apply()
+        _state.value = s.copy(profiles = list, mainProfileId = mainId)
     }
 
     /** Цвет заливки дня календаря по профилю смены (null — вне дня). */

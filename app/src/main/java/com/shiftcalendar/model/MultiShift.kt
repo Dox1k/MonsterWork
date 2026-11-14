@@ -164,14 +164,42 @@ fun dayTimeLabel(shifts: List<Shift>): String? {
 }
 
 /**
- * Кто рисует банки монстра в этот день (решение 16-Б): первый профиль дня.
- * Если у первого профиля выходной, банки не идут — даже когда второй профиль
- * в этот день работает.
+ * Время конкретного профиля в дне — для подписи в его половине квадрата
+ * (просьба клиента): у каждой половины своё время. Формат тот же «08:00–20:00».
  */
-fun dayBanksShift(shifts: List<Shift>): Shift? {
-    val first = firstProfileShift(shifts) ?: return null
-    return first.takeIf { !it.isDayOff && !it.startTime.isNullOrEmpty() }
+fun timeLabelForProfile(shifts: List<Shift>, profileId: Long): String? {
+    val own = MultiShift.ordered(shifts)
+        .firstOrNull { it.profileId == profileId && !it.isDayOff } ?: return null
+    val span = MultiShift.shiftSpan(own) ?: return null
+    if (span.first == Int.MAX_VALUE) return null
+    val start = own.startTime ?: return null
+    val end = own.endTime ?: return null
+    return "$start–$end"
 }
+
+/**
+ * Кто рисует банки монстра в этот день (просьба клиента): смена ГЛАВНОГО
+ * профиля. Банки и статистика одной смены идут только за рабочие смены
+ * главного профиля — смены второго профиля их не получают.
+ *
+ * [mainProfileId] — id главного профиля (0 — главного нет). Пока главный
+ * профиль не выбран, банки не рисуются ни за кого: иначе непонятно, чьи часы
+ * считать. Ручная смена без профиля (profileId = 0) тоже не подходит: она не
+ * принадлежит главному профилю.
+ */
+fun dayBanksShift(shifts: List<Shift>, mainProfileId: Long): Shift? {
+    if (mainProfileId <= 0L) return null
+    return MultiShift.ordered(shifts).firstOrNull {
+        it.profileId == mainProfileId && !it.isDayOff && !it.startTime.isNullOrEmpty()
+    }
+}
+
+/**
+ * Смены главного профиля в наборе — из них считаются банки и статистика
+ * одной смены. Пустой список, если главный профиль не задан.
+ */
+fun mainProfileShifts(shifts: List<Shift>, mainProfileId: Long): List<Shift> =
+    if (mainProfileId <= 0L) emptyList() else shifts.filter { it.profileId == mainProfileId && !it.isDayOff }
 
 /**
  * Пары «профиль дня» для раскраски квадрата (решение 12-Б): верхний цвет —

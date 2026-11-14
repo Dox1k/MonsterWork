@@ -126,7 +126,8 @@ fun AppRoot(vm: ShiftViewModel = viewModel()) {
             onDeleteProfile = vm::deleteProfile,
             onProfileName = vm::setProfileName,
             onWorkColor = vm::setWorkColor,
-            onDayOffColor = vm::setDayOffColor
+            onDayOffColor = vm::setDayOffColor,
+            onMainProfile = { main -> vm.setMainProfile(state.selectedProfileId, main) }
         )
     }
 
