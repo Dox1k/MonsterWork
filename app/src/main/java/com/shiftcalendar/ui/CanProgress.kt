@@ -1,6 +1,11 @@
 package com.shiftcalendar.ui
 
+import androidx.compose.animation.core.LinearEasing
+import androidx.compose.animation.core.RepeatMode
+import androidx.compose.animation.core.animateFloat
 import androidx.compose.animation.core.animateFloatAsState
+import androidx.compose.animation.core.infiniteRepeatable
+import androidx.compose.animation.core.rememberInfiniteTransition
 import androidx.compose.animation.core.tween
 import androidx.compose.foundation.Canvas
 import androidx.compose.foundation.background
@@ -200,20 +205,54 @@ fun MonsterBanks(shift: Shift?, now: LocalDateTime) {
 /**
  * Банка: пока прогресс 0 — светлый контур, по мере смены тёмная заливка
  * поднимается снизу вверх и проявляется логотип-«когти».
- * [particles] — доля прошедшей смены (0..1): внутри заливки видны зелёные
- * частицы, которые поднимаются вверх, как в прошлой версии дизайна.
+ * [particles] — доля прошедшей смены (0..1): внутри заливки поднимаются
+ * зелёные частицы, которые заполняют банку снизу вверх, как в прошлой версии.
  * [seed] — стабильное зерно частиц (id смены): без него частицы «дрожали» бы
  * при каждой перерисовке.
+ *
+ * Анимация: пока банка наливается и смена идёт ([particles] < 1), частицы
+ * непрерывно поднимаются от дна к поверхности жидкости — бесконечный цикл,
+ * чтобы заполнение было видно на глаз, а не выглядело статичной картинкой.
  */
 @Composable
 fun Can(fill: Float, modifier: Modifier = Modifier, particles: Float = 0f, seed: Long = 0L) {
     val empty = BankPalette.Empty
+    // Плавный подъём частиц: одна фаза на ~2.4 с. Идёт, пока смена не закончена.
+    val live = particles > 0f && particles < 1f
+    val phase = rememberInfiniteTransition(label = "can-particles")
+    val drift by phase.animateFloat(
+        initialValue = 0f,
+        targetValue = 1f,
+        animationSpec = infiniteRepeatable(
+            animation = tween(durationMillis = 2400, easing = LinearEasing),
+            repeatMode = RepeatMode.Restart
+        ),
+        label = "particles-rise"
+    )
+    // Плавная заливка: при завершении часа банка «доливается» анимацией.
+    val animatedFill by animateFloatAsState(
+        targetValue = fill.coerceIn(0f, 1f),
+        animationSpec = tween(durationMillis = 700),
+        label = "can-fill"
+    )
     Canvas(modifier = modifier) {
-        drawCan(fill.coerceIn(0f, 1f), empty, particles.coerceIn(0f, 1f), seed)
+        drawCan(
+            fill = animatedFill,
+            empty = empty,
+            particles = particles.coerceIn(0f, 1f),
+            seed = seed,
+            drift = if (live) drift else 0f
+        )
     }
 }
 
-private fun DrawScope.drawCan(fill: Float, empty: Color, particles: Float = 0f, seed: Long = 0L) {
+private fun DrawScope.drawCan(
+    fill: Float,
+    empty: Color,
+    particles: Float = 0f,
+    seed: Long = 0L,
+    drift: Float = 0f
+) {
     val w = size.width
     val h = size.height
     val bodyTop = h * 0.10f
@@ -247,7 +286,7 @@ private fun DrawScope.drawCan(fill: Float, empty: Color, particles: Float = 0f, 
             // Зелёные частицы смены: пока идёт смена, внутри заливки
             // поднимаются вверх искорки. Их высота привязана к прогрессу,
             // поэтому частицы не «застывают» без перерисовки.
-            drawShiftParticles(fillTop, bodyBottom, w, particles, seed)
+            drawShiftParticles(fillTop, bodyBottom, w, particles, seed, drift)
             // зелёный логотип-«когти» проявляется вместе с заливкой
             val alpha = (fill * 1.6f).coerceIn(0f, 1f)
             val cx = w / 2f
@@ -287,34 +326,41 @@ private fun DrawScope.drawCan(fill: Float, empty: Color, particles: Float = 0f, 
 
 /**
  * Зелёные частицы внутри заливки банки: маленькие точки и полоски, которые
- * поднимаются вверх вместе с заполнением. Чем больше прошло смены, тем выше
- * поднимаются и тем плотнее светятся — так «работа идёт» видно глазом.
+ * заполняют банку снизу вверх. [drift] — фаза анимации (0..1, бесконечный
+ * цикл): каждый кадр частицы поднимаются выше, поэтому видно, что жидкость
+ * «кипит» и наполняет банку, а не нарисована статично.
  *
- * Частицы детерминированы по [seed] (id смены): позиции не зависят от времени
- * кадра, поэтому картинка не дрожит, а фиксированный набор точек просто
- * постепенно поднимается вместе с уровнем заливки.
+ * Частицы детерминированы по [seed] (id смены): набор точек и их стартовые
+ * позиции не зависят от времени кадра, поэтому картинка не дрожит — двигается
+ * весь слой ровно на [drift].
  */
 private fun DrawScope.drawShiftParticles(
     fillTop: Float,
     bodyBottom: Float,
     w: Float,
     particles: Float,
-    seed: Long
+    seed: Long,
+    drift: Float
 ) {
     if (particles <= 0f) return
     val span = (bodyBottom - fillTop).coerceAtLeast(1f)
     val rnd = java.util.Random(if (seed != 0L) seed else 1L)
     val count = (18 + (particles * 22).toInt()).coerceAtMost(46)
     val green = BankPalette.MonsterGreen
+    // Глубина, на которую частицы «налиты» в банку: снизу вверх по мере смены.
+    val level = span * particles
     repeat(count) { i ->
-        // Каждая частица живёт в своём «цикле» подъёма: фаза задаётся seed'ом,
-        // а высота — уровнем заливки, чтобы частицы были видны уже с первых минут.
-        val phase = rnd.nextFloat()
+        // У каждой частицы своя стартовая позиция у дна и свой сдвиг фазы.
+        // За цикл [drift] 0→1 она поднимается на всю высоту жидкости и
+        // появляется снова снизу — непрерывный поток, заполняющий банку.
+        val start = rnd.nextFloat()
+        val rise = ((drift + start) % 1f)
         val x = w * (0.12f + 0.76f * rnd.nextFloat())
-        val rise = ((phase + particles) % 1f)
-        val y = bodyBottom - span * rise
+        // Частица живёт только в пределах налитой жидкости.
+        val y = bodyBottom - level * rise
         if (y < fillTop || y > bodyBottom) return@repeat
-        val alpha = (0.35f + 0.65f * particles).coerceIn(0f, 1f)
+        // Выше к поверхности — ярче: виден «уровень кипения».
+        val alpha = (0.30f + 0.70f * (1f - rise)).coerceIn(0f, 1f)
         val r = (w * 0.035f) * (0.6f + 0.8f * rnd.nextFloat())
         if (i % 3 == 0) {
             // Полоска-пузырёк: чуть выше обычной точки.

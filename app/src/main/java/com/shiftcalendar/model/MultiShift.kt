@@ -232,3 +232,79 @@ fun halfColorForProfile(
     if (own.isEmpty()) return null
     return if (own.any { !it.isDayOff }) workColor else dayOffColor
 }
+
+// ---------- Полосы квадрата дня: доля у каждой смены ----------
+
+/**
+ * Одна полоса квадрата дня: смена и её доля высоты (0..1).
+ * Порядок списка — сверху вниз, как рисуется в ячейке.
+ */
+data class DayBand(
+    val shift: Shift,
+    val fraction: Float,
+    val isMain: Boolean
+)
+
+/**
+ * Доли полос квадрата дня по числу смен (просьба клиента).
+ *
+ * Правила:
+ *  - одна смена — занимает всю ячейку (1.0);
+ *  - две смены — по половине (0.5 / 0.5);
+ *  - три смены — смена главного профиля занимает половину (0.5), две
+ *    остальные — по четверти (0.25);
+ *  - четыре смены и больше — поровну (по 0.25 при четырёх).
+ *
+ * Главная смена — смена главного профиля ([mainProfileId]); если главного нет
+ * или его смены в дне нет, «крупной» становится первая по времени. Так ячейка
+ * всегда имеет ровно одну доминирующую полосу, а не несколько.
+ */
+fun dayBandFractions(shifts: List<Shift>, mainProfileId: Long): List<Float> {
+    val n = shifts.size
+    if (n <= 0) return emptyList()
+    if (n == 1) return listOf(1f)
+    if (n == 2) return listOf(0.5f, 0.5f)
+    // Три смены: главная — половина, две остальные — по четверти.
+    if (n == 3) {
+        val mainIndex = mainBandIndex(shifts, mainProfileId)
+        return List(3) { i -> if (i == mainIndex) 0.5f else 0.25f }
+    }
+    // Четыре и больше: поровну (при четырёх — по 0.25, как просил клиент).
+    val each = 1f / n
+    return List(n) { each }
+}
+
+/**
+ * Индекс «главной» полосы в дне: смена главного профиля, иначе первая по
+ * времени. Служит для правила трёх смен («главная занимает 50%»).
+ */
+fun mainBandIndex(shifts: List<Shift>, mainProfileId: Long): Int {
+    if (mainProfileId > 0L) {
+        val i = shifts.indexOfFirst { it.profileId == mainProfileId && !it.isDayOff }
+        if (i >= 0) return i
+    }
+    return 0
+}
+
+/**
+ * Полосы квадрата дня: смены в порядке отображения ([MultiShift.ordered]) со
+ * своими долями. У дня-выходного без смен список пуст.
+ *
+ * Главная полоса помечена [DayBand.isMain] — на ней (и только на ней, если она
+ * занимает половину и больше) показывается время смены.
+ */
+fun dayBands(shifts: List<Shift>, mainProfileId: Long): List<DayBand> {
+    val ordered = MultiShift.ordered(shifts)
+    if (ordered.isEmpty()) return emptyList()
+    val fractions = dayBandFractions(ordered, mainProfileId)
+    val mainIdx = mainBandIndex(ordered, mainProfileId)
+    return ordered.mapIndexed { i, s ->
+        DayBand(shift = s, fraction = fractions[i], isMain = i == mainIdx)
+    }
+}
+
+/**
+ * Показывать ли время на полосе: клиент просил писать время только той смене,
+ * чей цвет занимает большую часть ячейки — то есть половину и больше (0.5+).
+ */
+fun bandShowsTime(fraction: Float): Boolean = fraction >= 0.5f

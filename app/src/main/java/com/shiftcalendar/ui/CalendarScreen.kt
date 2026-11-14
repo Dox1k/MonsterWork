@@ -345,17 +345,22 @@ private fun DayCell(
     val summary = summarizeDay(ordered)
     // Сколько смен в работе прямо сейчас — только у сегодняшней ячейки.
     val runningNow = if (isToday) activeShiftsAt(ordered, state.now) else 0
-    // Решение клиента (6-А, 12-Б): квадрат одного размера; если в дне сошлись
-    // два профиля — верхняя половина его цвета, нижняя — второго профиля.
-    val split = daySplitColors(state, ordered)
-    val cellBg: Brush? = split?.let {
-        Brush.verticalGradient(0.5f to it.first, 0.5f to it.second)
+    // Полосы квадрата: по одной на смену. Смена главного профиля занимает
+    // половину при трёх сменах; при двух — пополам; при четырёх и больше —
+    // поровну (просьба клиента, дни 28 и 29 — эталон).
+    val bands = dayBands(ordered, state.mainProfileId)
+    val cellBg: Brush? = if (bands.isEmpty()) null else {
+        // Накопительные границы: каждый цвет держится на своей доле высоты.
+        val stops = ArrayList<Pair<Float, Color>>(bands.size * 2)
+        var acc = 0f
+        bands.forEach { band ->
+            val c = bandColor(state, band.shift)
+            if (stops.isNotEmpty()) stops.add(acc to c)
+            acc += band.fraction
+            stops.add(acc to c)
+        }
+        Brush.verticalGradient(*stops.toTypedArray())
     }
-    // Время каждой половины: своё у верхнего профиля и у нижнего.
-    val (topProfileId, bottomProfileId) = dayProfilePair(ordered)
-    val splitTwoProfiles = topProfileId > 0L && bottomProfileId > 0L && bottomProfileId != topProfileId
-    val topTime = if (splitTwoProfiles) timeLabelForProfile(ordered, topProfileId) else dayTimeLabel(ordered)
-    val bottomTime = if (splitTwoProfiles) timeLabelForProfile(ordered, bottomProfileId) else null
     Box(
         Modifier
             .padding(1.dp)
@@ -391,29 +396,32 @@ private fun DayCell(
             fontWeight = if (filled || isToday) FontWeight.Bold else FontWeight.Normal,
             color = if (filled) Color.White else Palette.Ink
         )
-        // Время половин — поверх числа, каждая у своего края квадрата. Так
-        // фиолетовая смена показывает время вверху, красная — внизу.
-        if (splitTwoProfiles) {
-            topTime?.let {
-                Text(
-                    it,
-                    fontSize = 7.sp,
-                    color = Color.White.copy(alpha = 0.92f),
-                    maxLines = 1,
-                    modifier = Modifier.align(Alignment.TopCenter).padding(top = 3.dp)
-                )
-            }
-            bottomTime?.let {
-                Text(
-                    it,
-                    fontSize = 7.sp,
-                    color = Color.White.copy(alpha = 0.92f),
-                    maxLines = 1,
-                    modifier = Modifier.align(Alignment.BottomCenter).padding(bottom = 3.dp)
-                )
-            }
-            return@Box
+        // Время смены — в своей полосе. Показываем его только той смене, чья
+        // полоса занимает половину ячейки и больше (просьба клиента): у трёх
+        // смен время есть у главной, у четвертных полос — нет.
+        val timeBands = bands.filter { bandShowsTime(it.fraction) && !it.shift.isDayOff }
+        timeBands.forEach { band ->
+            val label = timeLabelForShift(band.shift) ?: return@forEach
+            // Куда ставить подпись: у верхней полосы — к верхнему краю, у
+            // нижней — к нижнему, у средней (одна смена, вся ячейка) — вниз.
+            val idx = bands.indexOf(band)
+            val atTop = idx == 0 && bands.size > 1
+            Text(
+                label,
+                fontSize = 7.sp,
+                color = Color.White.copy(alpha = 0.92f),
+                maxLines = 1,
+                modifier = if (atTop) {
+                    Modifier.align(Alignment.TopCenter).padding(top = 3.dp)
+                } else {
+                    Modifier.align(Alignment.BottomCenter).padding(bottom = 3.dp)
+                }
+            )
         }
+        // При нескольких сменах времени в одной полосе достаточно — вторая
+        // подпись только дублировала бы нижний край. Детали дня показывает
+        // редактор, а в 44 dp важнее числа и цвета.
+        if (bands.size > 1) return@Box
         Column(
             horizontalAlignment = Alignment.CenterHorizontally,
             modifier = Modifier.align(Alignment.BottomCenter).padding(bottom = 3.dp)
@@ -422,7 +430,7 @@ private fun DayCell(
                 dayOff && summary.workCount == 0 ->
                     Text("вых", fontSize = 7.sp, color = Color.White.copy(alpha = 0.9f))
                 summary.workCount == 1 && !dayOff ->
-                    topTime?.let { label ->
+                    dayTimeLabel(ordered)?.let { label ->
                         Text(label, fontSize = 7.sp, color = Color.White.copy(alpha = 0.9f), maxLines = 1)
                     }
                 summary.workCount > 1 -> {
@@ -696,27 +704,25 @@ private fun TotalItem(label: String, value: String, accent: Color = Palette.Ink)
     }
 }
 
-/** Цвет профиля [pid] в этом дне: рабочий — workColor, только выходные — dayOffColor. */
-@Composable
-private fun profileHalfColor(state: UiState, shifts: List<Shift>, pid: Long): Color? {
-    if (pid <= 0L) return null
-    val own = shifts.filter { it.profileId == pid }
-    if (own.isEmpty()) return null
-    val p = state.profiles.firstOrNull { it.id == pid } ?: return null
-    return Color(if (own.any { !it.isDayOff }) p.workColor else p.dayOffColor)
-}
-
-/**
- * Пара цветов «верх/низ» квадрата дня (решение 12-Б): если в дне сошлись два
- * разных профиля — верх берёт цвет первого, низ — второго. Один профиль —
- * оба цвета совпадают (квадрат сплошной). Выходной без профиля — null.
+/** Цвет одной полосы квадрата: цвет профиля смены (рабочий или выходного).
+ * Смена без профиля (ручная) — дневной зелёный выходного по умолчанию, чтобы
+ * полоса не пропадала в градиенте.
  */
 @Composable
-private fun daySplitColors(state: UiState, shifts: List<Shift>): Pair<Color, Color>? {
-    val (firstId, secondId) = dayProfilePair(shifts)
-    val top = profileHalfColor(state, shifts, firstId)
-        ?: if (shifts.any { it.isDayOff }) Palette.DayOffGreen else null
-    val bottom = if (secondId != firstId) profileHalfColor(state, shifts, secondId) else top
-    val resolvedTop = top ?: return null
-    return resolvedTop to (bottom ?: resolvedTop)
+private fun bandColor(state: UiState, shift: Shift): Color {
+    val pid = shift.profileId
+    if (pid > 0L) {
+        val p = state.profiles.firstOrNull { it.id == pid }
+        if (p != null) return Color(if (shift.isDayOff) p.dayOffColor else p.workColor)
+    }
+    return Palette.DayOffGreen
+}
+
+/** Время одной смены в формате «08:00–20:00»; null — времени нет. */
+private fun timeLabelForShift(shift: Shift): String? {
+    if (shift.isDayOff) return null
+    val start = shift.startTime ?: return null
+    val end = shift.endTime ?: return null
+    if (start.isEmpty() || end.isEmpty()) return null
+    return "$start–$end"
 }
